@@ -1,0 +1,8 @@
+pandas
+numpy
+flask
+matplotlib
+tqdm
+python-dotenv
+scikit-learn
+joblib
