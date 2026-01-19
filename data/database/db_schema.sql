@@ -1,114 +1,130 @@
 -- =====================================================
--- TABELA 01 — CONCURSOS OFICIAIS (FONTE DA VERDADE)
+-- 01) CONCURSOS (DADOS OFICIAIS)
+-- dezenas em formato CSV: "1,2,3,4,5,6,7,8,9,10,11,12,13,14,15"
 -- =====================================================
 CREATE TABLE IF NOT EXISTS concursos (
-    concurso INTEGER PRIMARY KEY,
-    d1 INTEGER, d2 INTEGER, d3 INTEGER, d4 INTEGER, d5 INTEGER,
-    d6 INTEGER, d7 INTEGER, d8 INTEGER, d9 INTEGER, d10 INTEGER,
-    d11 INTEGER, d12 INTEGER, d13 INTEGER, d14 INTEGER, d15 INTEGER,
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    concurso INTEGER UNIQUE NOT NULL,
+    dezenas TEXT NOT NULL,
     data TEXT
 );
 
-CREATE INDEX IF NOT EXISTS idx_concursos_data
-ON concursos(data);
+CREATE INDEX IF NOT EXISTS idx_concursos_concurso ON concursos(concurso);
 
 -- =====================================================
--- TABELA 02 — CÉREBROS (ENTIDADES DE APRENDIZADO)
+-- 02) TENTATIVAS / EXPERIMENTOS
+-- =====================================================
+CREATE TABLE IF NOT EXISTS tentativas (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    concurso_n INTEGER NOT NULL,      -- N
+    concurso_n1 INTEGER NOT NULL,     -- N+1 (resultado real usado na avaliação)
+    tipo_jogo INTEGER NOT NULL,       -- 15 ou 18
+    tentativa INTEGER NOT NULL,
+    dezenas TEXT NOT NULL,
+    acertos INTEGER NOT NULL,
+    score REAL NOT NULL,
+    score_tag TEXT NOT NULL,          -- ex: "hub_v3"
+    brain_id TEXT,                    -- cerebro autor (quando aplicável)
+    tempo_exec REAL,
+    timestamp TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_tentativas_concurso ON tentativas(concurso_n);
+CREATE INDEX IF NOT EXISTS idx_tentativas_acertos ON tentativas(acertos);
+CREATE INDEX IF NOT EXISTS idx_tentativas_score ON tentativas(score);
+
+-- =====================================================
+-- 03) MEMÓRIA DE JOGOS FORTES (11–15)
+-- =====================================================
+CREATE TABLE IF NOT EXISTS memoria_jogos (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    concurso_n INTEGER NOT NULL,
+    concurso_n1 INTEGER NOT NULL,
+    dezenas TEXT NOT NULL,
+    acertos INTEGER NOT NULL,
+    peso REAL DEFAULT 1.0,
+    origem TEXT,
+    timestamp TEXT,
+    UNIQUE(concurso_n, concurso_n1, dezenas)
+);
+
+CREATE INDEX IF NOT EXISTS idx_memoria_acertos ON memoria_jogos(acertos);
+
+-- =====================================================
+-- 04) CHECKPOINT INCREMENTAL (não reprocessar tudo)
+-- =====================================================
+CREATE TABLE IF NOT EXISTS checkpoint (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    ultimo_concurso_processado INTEGER,
+    etapa TEXT,
+    timestamp TEXT
+);
+
+-- =====================================================
+-- 05) CÉREBROS (REGISTRO)
 -- =====================================================
 CREATE TABLE IF NOT EXISTS cerebros (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    brain_id TEXT UNIQUE NOT NULL,
     nome TEXT NOT NULL,
-    tipo TEXT NOT NULL,              -- statistical | pattern | hybrid | neural
-    classe TEXT NOT NULL,            -- classe Python
+    categoria TEXT NOT NULL,
     versao TEXT NOT NULL,
-    ativo INTEGER DEFAULT 1,
-    criado_em DATETIME DEFAULT CURRENT_TIMESTAMP
+    habilitado INTEGER DEFAULT 1,
+    criado_em TEXT,
+    atualizado_em TEXT
 );
 
-CREATE INDEX IF NOT EXISTS idx_cerebros_tipo
-ON cerebros(tipo);
-
 -- =====================================================
--- TABELA 03 — ESTADO INTERNO DOS CÉREBROS (MEMÓRIA VIVA)
+-- 06) ESTADO DOS CÉREBROS (JSON)
 -- =====================================================
 CREATE TABLE IF NOT EXISTS cerebro_estado (
     cerebro_id INTEGER PRIMARY KEY,
-    estado_json TEXT NOT NULL,       -- JSON serializado
-    atualizado_em DATETIME DEFAULT CURRENT_TIMESTAMP,
+    estado_json TEXT NOT NULL,
+    atualizado_em TEXT,
     FOREIGN KEY (cerebro_id) REFERENCES cerebros(id)
 );
 
 -- =====================================================
--- TABELA 04 — JOGOS GERADOS PELOS CÉREBROS
--- =====================================================
-CREATE TABLE IF NOT EXISTS cerebro_jogos (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    cerebro_id INTEGER NOT NULL,
-    concurso INTEGER NOT NULL,
-    tamanho_jogo INTEGER NOT NULL,   -- 15 ou 18
-    jogo TEXT NOT NULL,              -- JSON: [1,2,3,...]
-    pontos INTEGER,
-    criado_em DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (cerebro_id) REFERENCES cerebros(id),
-    FOREIGN KEY (concurso) REFERENCES concursos(concurso)
-);
-
-CREATE INDEX IF NOT EXISTS idx_cerebro_jogos_cerebro
-ON cerebro_jogos(cerebro_id);
-
-CREATE INDEX IF NOT EXISTS idx_cerebro_jogos_pontos
-ON cerebro_jogos(pontos);
-
--- =====================================================
--- TABELA 05 — PERFORMANCE CONSOLIDADA DOS CÉREBROS
+-- 07) PERFORMANCE DO CÉREBRO POR CONCURSO
 -- =====================================================
 CREATE TABLE IF NOT EXISTS cerebro_performance (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     cerebro_id INTEGER NOT NULL,
     concurso INTEGER NOT NULL,
-    jogos_gerados INTEGER,
     media_pontos REAL,
-    max_pontos INTEGER,
-    qtd_11 INTEGER,
-    qtd_12 INTEGER,
-    qtd_13 INTEGER,
     qtd_14 INTEGER,
     qtd_15 INTEGER,
-    criado_em DATETIME DEFAULT CURRENT_TIMESTAMP,
+    jogos_gerados INTEGER,
+    atualizado_em TEXT,
+    UNIQUE(cerebro_id, concurso),
     FOREIGN KEY (cerebro_id) REFERENCES cerebros(id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_cerebro_performance_cerebro
-ON cerebro_performance(cerebro_id);
-
-CREATE INDEX IF NOT EXISTS idx_cerebro_performance_max
-ON cerebro_performance(max_pontos);
-
 -- =====================================================
--- TABELA 06 — CHECKPOINT GLOBAL DE TREINAMENTO
+-- 08) ESTATÍSTICAS CONSOLIDADAS (JSON)
 -- =====================================================
-CREATE TABLE IF NOT EXISTS checkpoint (
-    id INTEGER PRIMARY KEY CHECK (id = 1),
-    ultimo_concurso_processado INTEGER,
-    ultima_execucao TEXT,
-    atualizado_em DATETIME DEFAULT CURRENT_TIMESTAMP
+CREATE TABLE IF NOT EXISTS estatisticas (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    chave TEXT UNIQUE NOT NULL,
+    valor TEXT NOT NULL,
+    ultima_atualizacao TEXT
 );
 
 -- =====================================================
--- TABELA 07 — METADADOS DO SISTEMA
+-- 09) METADADOS DO SISTEMA
 -- =====================================================
 CREATE TABLE IF NOT EXISTS sistema (
-    chave TEXT PRIMARY KEY,
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    chave TEXT UNIQUE NOT NULL,
     valor TEXT NOT NULL
 );
 
 -- =====================================================
--- TABELA 08 — LOGS DE EXECUÇÃO (LEVE E OPCIONAL)
+-- 10) LOGS LEVES
 -- =====================================================
 CREATE TABLE IF NOT EXISTS logs_execucao (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     modulo TEXT,
-    mensagem TEXT,
     duracao REAL,
-    criado_em DATETIME DEFAULT CURRENT_TIMESTAMP
+    timestamp TEXT
 );
