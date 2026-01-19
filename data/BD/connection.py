@@ -1,27 +1,12 @@
 # data/BD/connection.py
-
 import sqlite3
-from pathlib import Path
+from config.paths import DB_PATH, BD_DIR
 
-# ===============================
-# 📌 CAMINHO CENTRAL DO BANCO
-# ===============================
-
-BASE_DIR = Path(__file__).resolve().parent
-DB_PATH = BASE_DIR / "lotofacil.db"
-
-
-# ===============================
-# 🔌 CONEXÃO COM SQLITE
-# ===============================
-
-def get_conn():
-    """
-    Retorna uma conexão SQLite válida.
-    Cria diretórios automaticamente se necessário.
-    """
-    BASE_DIR.mkdir(parents=True, exist_ok=True)
-
+def get_conn() -> sqlite3.Connection:
+    BD_DIR.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row  # acesso por nome de coluna
+    conn.execute("PRAGMA journal_mode=WAL;")
+    conn.execute("PRAGMA synchronous=NORMAL;")
+    conn.execute("PRAGMA temp_store=MEMORY;")
+    conn.execute("PRAGMA foreign_keys=ON;")
     return conn

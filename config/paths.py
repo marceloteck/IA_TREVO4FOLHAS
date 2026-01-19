@@ -1,20 +1,11 @@
+# config/paths.py
 from pathlib import Path
 
-# Raiz do projeto (ajusta automaticamente)
-BASE_DIR = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parents[1]
 
-# =========================
-# BANCO DE DADOS
-# =========================
-DB_DIR = BASE_DIR / "data" / "BD"
-DB_PATH = DB_DIR / "lotofacil.db"
+DB_PATH = ROOT / "data" / "BD" / "lotofacil.db"
+SCHEMA_PATH = ROOT / "data" / "database" / "db_schema.sql"
+CSV_PATH = ROOT / "data" / "planilhas" / "Lotofácil.csv"
 
-# =========================
-# SCHEMA
-# =========================
-SCHEMA_PATH = BASE_DIR / "data" / "database" / "db_schema.sql"
-
-# =========================
-# CSV / PLANILHAS
-# =========================
-CSV_PATH = BASE_DIR / "data" / "planilhas" / "Lotofácil.csv"
+DATA_DIR = ROOT / "data"
+BD_DIR = ROOT / "data" / "BD"

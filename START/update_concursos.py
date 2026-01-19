@@ -1,91 +1,86 @@
-import sqlite3
-import pandas as pd
-from pathlib import Path
+# START/update_concursos.py
+from __future__ import annotations
+
+import sys
 from datetime import datetime
 
-from config.paths import DB_PATH, CSV_PATH
+import pandas as pd
 
-# ==========================
-# UTIL
-# ==========================
-def log(msg):
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}")
+from config.paths import CSV_PATH
+from data.BD.connection import get_conn
 
-# ==========================
-# ATUALIZAR CONCURSOS
-# ==========================
-def atualizar_concursos():
+def now() -> str:
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+def log(msg: str):
+    print(f"[{now()}] {msg}")
+
+def main():
     try:
-        if not DB_PATH.exists():
-            raise FileNotFoundError("Banco de dados não encontrado. Execute startBD.py primeiro.")
+        if not CSV_PATH.exists():
+            log(f"❌ CSV não encontrado: {CSV_PATH}")
+            sys.exit(1)
 
-        log("Conectando ao banco de dados...")
-        conn = sqlite3.connect(DB_PATH)
-        cursor = conn.cursor()
+        conn = get_conn()
+        cur = conn.cursor()
 
-        # --------------------------
-        # 1. Último concurso salvo
-        # --------------------------
-        cursor.execute("SELECT MAX(concurso) FROM concursos")
-        ultimo_concurso = cursor.fetchone()[0] or 0
-
-        log(f"Último concurso no banco: {ultimo_concurso}")
-
-        # --------------------------
-        # 2. Ler CSV
-        # --------------------------
-        log("Lendo CSV atualizado...")
+        log("📥 Lendo CSV...")
         df = pd.read_csv(CSV_PATH, sep=";")
 
-        novos = df[df.iloc[:, 0] > ultimo_concurso]
+        # Descobre o maior concurso já no banco
+        cur.execute("SELECT MAX(concurso) FROM concursos")
+        row = cur.fetchone()
+        max_db = int(row[0]) if row and row[0] is not None else 0
 
-        if novos.empty:
-            log("Nenhum concurso novo encontrado.")
-            conn.close()
-            return
+        log(f"📌 Maior concurso no DB: {max_db}")
 
-        log(f"{len(novos)} novos concursos encontrados.")
-
-        # --------------------------
-        # 3. Inserir novos concursos
-        # --------------------------
-        for _, row in novos.iterrows():
-            concurso = int(row.iloc[0])
-            dezenas = ",".join(str(int(d)).zfill(2) for d in row.iloc[1:16])
-
-            cursor.execute("""
-                INSERT OR IGNORE INTO concursos (concurso, dezenas, data)
-                VALUES (?, ?, ?)
-            """, (concurso, dezenas, None))
-
-        # --------------------------
-        # 4. Atualizar checkpoint
-        # --------------------------
-        ultimo_importado = int(novos.iloc[-1, 0])
-
-        cursor.execute("""
-            UPDATE checkpoint
-            SET ultimo_concurso_processado = ?, 
-                ultimo_treino = ?, 
-                timestamp = ?
-            WHERE id = 1
-        """, (
-            ultimo_importado,
-            "import_csv_incremental",
-            datetime.now().isoformat()
-        ))
+        novos = 0
+        for _, r in df.iterrows():
+            concurso = int(r.iloc[0])
+            if concurso <= max_db:
+                continue
+            dezenas = [int(r.iloc[i]) for i in range(1, 16)]
+            cur.execute(
+                """
+                INSERT OR IGNORE INTO concursos (
+                    concurso,d1,d2,d3,d4,d5,d6,d7,d8,d9,d10,d11,d12,d13,d14,d15
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                """,
+                [concurso] + dezenas
+            )
+            novos += cur.rowcount
 
         conn.commit()
-        conn.close()
+        log(f"✅ Novos concursos inseridos: {novos}")
 
-        log(f"✅ Atualização concluída. Último concurso importado: {ultimo_importado}")
+        log("📊 Atualizando frequencias...")
+        cur.execute("DELETE FROM frequencias")
+        contagem = {i: 0 for i in range(1, 26)}
+        cur.execute("SELECT d1,d2,d3,d4,d5,d6,d7,d8,d9,d10,d11,d12,d13,d14,d15 FROM concursos")
+        rows = cur.fetchall()
+        for rr in rows:
+            for dez in rr:
+                contagem[int(dez)] += 1
 
+        total = sum(contagem.values())
+        for numero, qtd in contagem.items():
+            peso = qtd / total if total else 0.0
+            cur.execute(
+                "INSERT INTO frequencias (numero, quantidade, peso, atualizado_em) VALUES (?,?,?,?)",
+                (numero, qtd, peso, now())
+            )
+        conn.commit()
+        log("✅ Frequencias atualizadas")
+
+        log("🎉 Atualização concluída")
     except Exception as e:
-        log("❌ ERRO NA ATUALIZAÇÃO DOS CONCURSOS")
-        log(str(e))
+        log(f"❌ ERRO: {e}")
+        raise
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
-# ==========================
-# EXEC
-# ==========================
 if __name__ == "__main__":
-    atualizar_concursos()
+    main()
