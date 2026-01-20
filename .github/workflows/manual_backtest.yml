@@ -1,0 +1,70 @@
+name: Manual Backtest (BrainHub)
+
+on:
+  workflow_dispatch:
+    inputs:
+      hours:
+        description: "Quantas horas rodar (ex: 0.25 = 15min)"
+        required: true
+        default: "0.25"
+      block_size:
+        description: "Tamanho do bloco por ciclo (ex: 250)"
+        required: true
+        default: "250"
+      aggressive:
+        description: "Exploração mais pesada (true/false)"
+        required: true
+        default: "false"
+      seed:
+        description: "Seed opcional (vazio = aleatório)"
+        required: false
+        default: ""
+
+jobs:
+  run-backtest:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Init DB (schema + import CSV)
+        run: |
+          python START/startBD.py
+
+      - name: Run Backtest Engine
+        run: |
+          HOURS="${{ inputs.hours }}"
+          BLOCK="${{ inputs.block_size }}"
+          AGG="${{ inputs.aggressive }}"
+          SEED="${{ inputs.seed }}"
+
+          CMD="python -m training.backtest.backtest_engine --hours ${HOURS} --block-size ${BLOCK}"
+          if [ "${AGG}" = "true" ]; then
+            CMD="${CMD} --aggressive"
+          fi
+          if [ -n "${SEED}" ]; then
+            CMD="${CMD} --seed ${SEED}"
+          fi
+
+          echo "Running: ${CMD}"
+          ${CMD}
+
+      - name: Upload DB + Reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: treino-db-e-reports
+          path: |
+            data/BD/lotofacil.db
+            reports
+          if-no-files-found: warn
