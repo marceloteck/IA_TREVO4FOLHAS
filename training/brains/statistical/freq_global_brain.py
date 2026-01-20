@@ -6,31 +6,28 @@ from typing import Any, Dict, List
 import random
 
 from training.core.base_brain import BaseBrain
-from training.brains._utils import weighted_sample_without_replacement, count_even, max_consecutive_run
+from training.brains._utils import UNIVERSO, weighted_sample_without_replacement
 
 
 class StatFreqGlobalBrain(BaseBrain):
     """
-    Cérebro estatístico: Frequência Global (N->N+1)
-    - Aprende com resultado real N+1 (freq global acumulada)
-    - Gera candidatos com amostragem ponderada (sem reposição)
-    - Persistência total via BaseBrain (SQLite)
+    stat_freq_global
+    - Aprende a frequência GLOBAL das dezenas com base nos RESULTADOS REAIS (N+1)
+    - Pode dar reforço leve quando um jogo gerado performa muito bem (14/15)
+    - Gera jogos por amostragem ponderada (sem reposição) + exploração controlada
     """
 
-    def __init__(self, db_conn, core_15: int = 18, core_18: int = 22):
+    def __init__(self, db_conn):
         super().__init__(
             db_conn=db_conn,
             brain_id="stat_freq_global",
             name="Stat - Frequência Global",
             category="estatistico",
-            version="v1",
+            version="v2",
         )
-        self.core_15 = int(core_15)
-        self.core_18 = int(core_18)
 
-        # memória interna
-        self.freq = Counter()  # numero -> contagem
-        self.total_seen = 0
+        self.freq = Counter({i: 0 for i in UNIVERSO})
+        self.total_resultados = 0
 
         # carrega estado persistido (se existir)
         self.load_state()
@@ -39,8 +36,8 @@ class StatFreqGlobalBrain(BaseBrain):
     # CONTEXTO
     # ==================================================
     def evaluate_context(self, context: Dict[str, Any]) -> float:
-        # Se ainda não aprendeu nada, relevância menor (mas não zero)
-        return 0.6 if self.total_seen <= 0 else 1.0
+        # se ainda não há histórico no estado, relevância moderada
+        return 1.0 if self.total_resultados > 0 else 0.6
 
     # ==================================================
     # GERAÇÃO
@@ -49,32 +46,39 @@ class StatFreqGlobalBrain(BaseBrain):
         size = int(size)
         n = int(n)
 
-        universo = list(range(1, 26))
+        # pesos com suavização para nunca zerar
+        # (freq + 1) evita peso zero e mantém exploração
+        weights: Dict[int, float] = {d: float(self.freq.get(d, 0) + 1) for d in UNIVERSO}
 
-        # define core conforme tamanho do jogo
-        core_size = self.core_15 if size == 15 else self.core_18
-        core_size = max(size, min(25, core_size))
-
-        # ranking global
-        ranked = sorted(universo, key=lambda d: (self.freq.get(d, 0), -d), reverse=True)
+        # "core" mais frequentes (controla vício, mas ainda explora)
+        # 15 -> core 18 / 18 -> core 22
+        core_size = 18 if size == 15 else 22
+        ranked = sorted(UNIVERSO, key=lambda d: weights[d], reverse=True)
         core = ranked[:core_size]
 
-        # pesos (suavizados) para evitar zeros
-        # quanto mais frequência, maior a chance; sempre >= 0.001
-        weights = {d: float(self.freq.get(d, 0) + 1) for d in core}
-
         jogos: List[List[int]] = []
-
         for _ in range(n):
-            # 70% do jogo vem do core ponderado
-            k_core = max(0, min(size, int(round(size * 0.70))))
-            escolhidos_core = weighted_sample_without_replacement(weights, k_core)
+            # mistura: parte do core e parte do universo
+            # 15: ~70% core, 18: ~65% core
+            frac_core = 0.70 if size == 15 else 0.65
+            k_core = max(0, min(size, int(round(size * frac_core))))
 
-            jogo = set(escolhidos_core)
+            jogo = set()
 
-            # completa com diversidade do universo
-            while len(jogo) < size:
-                jogo.add(random.choice(universo))
+            # 1) pega do core, ponderado pela frequência global
+            if k_core > 0:
+                w_core = {d: weights[d] for d in core}
+                pick_core = weighted_sample_without_replacement(w_core, k_core)
+                jogo.update(pick_core)
+
+            # 2) completa com exploração no universo todo
+            faltam = size - len(jogo)
+            if faltam > 0:
+                # exploração: favorece ainda as frequentes, mas permite todo o universo
+                # vamos “achatar” pesos para não viciar demais
+                w_uni = {d: (weights[d] ** 0.70) for d in UNIVERSO if d not in jogo}
+                pick_uni = weighted_sample_without_replacement(w_uni, faltam)
+                jogo.update(pick_uni)
 
             jogos.append(sorted(jogo))
 
@@ -86,38 +90,18 @@ class StatFreqGlobalBrain(BaseBrain):
     def score_game(self, jogo: List[int], context: Dict[str, Any]) -> float:
         if not jogo:
             return 0.0
-
-        # normaliza por max freq (evita score explodir com o tempo)
         maxf = max(self.freq.values()) if self.freq else 1
+        if maxf <= 0:
+            return 0.0
 
-        # score base: média de frequências normalizadas
-        s_freq = sum((self.freq.get(int(d), 0) / maxf) for d in jogo) / len(jogo)
-
-        # pequenas penalizações estruturais (leve, sem overfit)
-        pares = count_even(jogo)
-        run = max_consecutive_run(jogo)
-
-        # ideal 7/8 pares em jogo de 15 (equilíbrio)
-        if len(jogo) == 15:
-            s_par = 1.0 - (abs(pares - 7.5) / 7.5)  # 0..1
-        else:
-            # para 18, alvo ~9 pares
-            s_par = 1.0 - (abs(pares - 9.0) / 9.0)
-
-        # penaliza sequências longas
-        pen_seq = 0.0
-        if run >= 6:
-            pen_seq = 0.25
-        elif run == 5:
-            pen_seq = 0.15
-        elif run == 4:
-            pen_seq = 0.07
-
-        # score final (comparativo)
-        return (s_freq * 0.72 + s_par * 0.28) - pen_seq
+        # score normalizado 0..1 (aprox)
+        s = 0.0
+        for d in jogo:
+            s += float(self.freq.get(int(d), 0)) / float(maxf)
+        return s / float(len(jogo))
 
     # ==================================================
-    # APRENDIZADO N -> N+1
+    # APRENDIZADO (N -> N+1)
     # ==================================================
     def learn(
         self,
@@ -127,57 +111,65 @@ class StatFreqGlobalBrain(BaseBrain):
         pontos: int,
         context: Dict[str, Any],
     ) -> None:
-        # Frequência global deve refletir o que realmente saiu (resultado N+1)
-        if not resultado_n1:
-            return
-
-        res = [int(x) for x in resultado_n1]
-        self.freq.update(res)
-        self.total_seen += len(res)
-
-        # opcional: reforço leve baseado em pontuação (sem distorcer a frequência real)
-        # se o jogo foi muito bom, aumenta um pouco o peso das dezenas do jogo
-        if pontos >= 14:
-            for d in jogo:
+        """
+        Aprendizado incremental:
+        - Atualiza frequência global com o RESULTADO REAL (N+1)
+        - Reforço leve para dezenas do 'jogo' quando foi muito bem (14/15)
+        """
+        if resultado_n1:
+            # frequência global é baseada no resultado real
+            for d in resultado_n1:
                 self.freq[int(d)] += 1
+            self.total_resultados += 1
 
-        # persiste no estado (mas sem salvar em disco toda chamada se você não quiser)
-        self.state["freq"] = {str(k): int(v) for k, v in self.freq.items()}
-        self.state["total_seen"] = int(self.total_seen)
+        # reforço leve (não pode dominar a estatística global)
+        # 14: +0.25 por dezena do jogo, 15: +0.50
+        if pontos >= 14 and jogo:
+            bonus = 0.50 if pontos >= 15 else 0.25
+            for d in jogo:
+                self.freq[int(d)] += bonus
 
-        # atualiza performance do cérebro por concurso (tabela cerebro_performance)
+        # salva no state (persistência via BaseBrain)
+        self.state = {
+            "freq": {str(k): float(v) for k, v in self.freq.items()},
+            "total_resultados": int(self.total_resultados),
+        }
+
+        # performance por concurso (auditoria)
         self._perf_update(concurso=int(concurso_n), pontos=int(pontos), jogos_gerados=1)
 
     # ==================================================
-    # PERSISTÊNCIA (SQLite via BaseBrain)
+    # PERSISTÊNCIA
     # ==================================================
-    def save_state(self) -> None:
-        # garante estado consistente
-        self.state["freq"] = {str(k): int(v) for k, v in self.freq.items()}
-        self.state["total_seen"] = int(self.total_seen)
-        self.state["core_15"] = int(self.core_15)
-        self.state["core_18"] = int(self.core_18)
-        super().save_state()
-
     def load_state(self) -> None:
         super().load_state()
 
-        raw = self.state.get("freq") or {}
-        self.freq = Counter({int(k): int(v) for k, v in raw.items()})
+        raw = self.state or {}
+        freq_raw = raw.get("freq") or {}
+        self.freq = Counter({i: 0 for i in UNIVERSO})
 
-        self.total_seen = int(self.state.get("total_seen", 0))
-        self.core_15 = int(self.state.get("core_15", self.core_15))
-        self.core_18 = int(self.state.get("core_18", self.core_18))
+        # pode ter float por causa dos bônus
+        for k, v in freq_raw.items():
+            try:
+                self.freq[int(k)] = float(v)
+            except Exception:
+                continue
+
+        try:
+            self.total_resultados = int(raw.get("total_resultados", 0))
+        except Exception:
+            self.total_resultados = 0
+
+    # BaseBrain.save_state já existe e salva self.state no banco
 
     # ==================================================
     # RELATÓRIO
     # ==================================================
     def report(self) -> Dict[str, Any]:
-        top10 = [n for n, _ in self.freq.most_common(10)]
+        ranked = sorted(UNIVERSO, key=lambda d: self.freq.get(d, 0), reverse=True)
         return {
             **super().report(),
-            "total_seen": int(self.total_seen),
-            "top10": top10,
-            "core_15": int(self.core_15),
-            "core_18": int(self.core_18),
+            "total_resultados": int(self.total_resultados),
+            "top10": ranked[:10],
+            "bottom10": ranked[-10:],
         }
