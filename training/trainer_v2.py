@@ -16,6 +16,12 @@ from training.utils.comparador import contar_acertos
 from training.brains.statistical.freq_global_brain import StatFreqGlobalBrain
 from training.brains.statistical.freq_recente_brain import StatFreqRecenteBrain
 from training.brains.temporal.atraso_brain import TemporalAtrasoBrain
+from training.brains.statistical.nucleo_satelites_brain import StatNucleoSatelitesBrain
+from training.brains.exploratory.total_dezenas_auto_brain import ExplorTotalDezenasAutoBrain
+from training.brains.statistical.elite_memory_brain import StatEliteMemoryBrain
+from training.brains.statistical.paridade_faixas_brain import StatParidadeFaixasBrain
+
+
 # (Opcional) se você tiver esse brain pronto, pode ligar:
 # from training.brains.statistical.pares_brain import StatParesBrain
 
@@ -302,6 +308,12 @@ def treinar_pendencias(conn, limite_concursos: Optional[int] = None) -> Dict[str
     hub.register(StatFreqGlobalBrain(conn))
     hub.register(StatFreqRecenteBrain(conn, janela=120))
     hub.register(TemporalAtrasoBrain(conn))
+    hub.register(StatNucleoSatelitesBrain(conn, janela=300))
+    hub.register(ExplorTotalDezenasAutoBrain(conn))
+    hub.register(StatEliteMemoryBrain(conn))
+    hub.register(StatParidadeFaixasBrain(conn))
+
+
     # Se existir no seu projeto e estiver pronto:
     # hub.register(StatParesBrain(conn))
 
