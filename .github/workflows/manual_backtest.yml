@@ -23,6 +23,9 @@ on:
         description: "Qtd mínima de novas memórias 13+ para permitir commit (evita spam)"
         required: true
         default: "10"
+  # Adicionado Cron para rodar a cada 20 minutos
+  schedule:
+    - cron: "*/20 * * * *"
 
 permissions:
   contents: write
@@ -53,10 +56,11 @@ jobs:
       - name: Run backtest
         shell: bash
         run: |
-          HOURS="${{ inputs.hours }}"
-          BLOCK="${{ inputs.block_size }}"
-          AGG="${{ inputs.aggressive }}"
-          MIN_MEM="${{ inputs.min_mem }}"
+          # Define valores padrão caso o disparador seja o Cron (onde inputs ficam vazios)
+          HOURS="${{ github.event.inputs.hours || '5.0' }}"
+          BLOCK="${{ github.event.inputs.block_size || '250' }}"
+          AGG="${{ github.event.inputs.aggressive || 'true' }}"
+          MIN_MEM="${{ github.event.inputs.min_mem || '13' }}"
 
           CMD="python -m training.backtest.backtest_engine --hours ${HOURS} --block-size ${BLOCK} --min-mem ${MIN_MEM}"
           if [ "${AGG}" = "true" ]; then
@@ -68,6 +72,7 @@ jobs:
 
       - name: Commit somente se teve ganho 13+/14+/15
         env:
-          MIN_NEW_13: ${{ inputs.min_new_13 }}
+          # Fallback para o script de commit
+          MIN_NEW_13: ${{ github.event.inputs.min_new_13 || '10' }}
         run: |
           python scripts/commit_if_good.py
