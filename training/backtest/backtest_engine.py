@@ -399,28 +399,43 @@ def run_one_concurso(
 
     def _process(cands: List[Dict[str, Any]], tipo: int):
         nonlocal mem, a14, a15, tentativa
+
+        tipo = int(tipo)  # garante 15/18
+
         for c in cands:
-            jogo = [int(x) for x in c.get("jogo", [])]
+            jogo = [int(x) for x in c.get("jogo", []) if x is not None]
+
+            # valida tamanho mínimo (15) e remove duplicatas
             if len(jogo) < 15:
                 continue
+            jogo = sorted(set(jogo))
+
+            # garante coerência com o "tipo" (15 ou 18)
+            if tipo in (15, 18) and len(jogo) != tipo:
+                # se vier diferente, ajusta sem quebrar (corta ou ignora)
+                if len(jogo) > tipo:
+                    jogo = jogo[:tipo]
+                else:
+                    continue
 
             acertos = contar_acertos(jogo, resultado_n1)
             score = float(c.get("score", 0.0))
             brain_id = str(c.get("brain_id", "unknown"))
 
+            # ✅ CORREÇÃO: tipo_jogo deve usar "tipo" (não existe "size" aqui)
             insert_tentativa(
                 conn=conn,
                 concurso_n=concurso_n,
                 concurso_n1=concurso_n + 1,
-                tipo_jogo=size,
+                tipo_jogo=tipo,               # ✅ corrigido
                 tentativa=tentativa,
                 dezenas=jogo,
                 acertos=acertos,
                 score=score,
-                score_tag=RUN_TAG,          # ex: "backtest_v1"
-                brain_id=brain_id,          # ex: item["brain_id"]
-                tempo_exec=tempo_exec,      # float
-                timestamp=now_str(),        # string
+                score_tag=RUN_TAG,            # ex: "backtest_v1"
+                brain_id=brain_id,            # ex: item["brain_id"]
+                tempo_exec=tempo_exec,        # float
+                timestamp=now_str(),          # string
             )
 
             if insert_memoria_forte(
@@ -443,7 +458,7 @@ def run_one_concurso(
 
             hub.learn(
                 concurso_n=concurso_n,
-                jogo=sorted(jogo),
+                jogo=jogo,
                 resultado_n1=resultado_n1,
                 pontos=acertos,
                 context=context,
@@ -452,10 +467,13 @@ def run_one_concurso(
 
             tentativa += 1
 
+
+    # chamadas (mantém igual)
     _process(cand15, 15)
     _process(cand18, 18)
 
     return {"mem": mem, "a14": a14, "a15": a15}
+
 
 
 # ==========================
