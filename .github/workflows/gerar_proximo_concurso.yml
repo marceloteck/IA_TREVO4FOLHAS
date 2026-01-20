@@ -1,0 +1,92 @@
+name: 🎯 Gerar Próximo Concurso (IA TREVO)
+
+on:
+  workflow_dispatch:
+    inputs:
+      PERFIL:
+        description: "Perfil de risco"
+        required: true
+        default: "balanceado"
+        type: choice
+        options:
+          - conservador
+          - balanceado
+          - agressivo
+
+      JANELA:
+        description: "Janela de histórico"
+        required: true
+        default: "300"
+
+      PER_BRAIN:
+        description: "Candidatos por cérebro"
+        required: true
+        default: "120"
+
+      TOP_N:
+        description: "Top N pós-hub"
+        required: true
+        default: "250"
+
+      MAX_SIM:
+        description: "Similaridade máxima (Jaccard)"
+        required: true
+        default: "0.78"
+
+jobs:
+  gerar:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write   # necessário se --salvar-db gerar commit depois
+
+    steps:
+      - name: 📥 Checkout do repositório
+        uses: actions/checkout@v4
+
+      - name: 🐍 Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: 📦 Instalar dependências
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: 🧱 Garantir banco inicializado
+        run: |
+          python START/startBD.py
+
+      - name: 🎯 Gerar números do próximo concurso
+        env:
+          PERFIL: ${{ inputs.PERFIL }}
+          JANELA: ${{ inputs.JANELA }}
+          PER_BRAIN: ${{ inputs.PER_BRAIN }}
+          TOP_N: ${{ inputs.TOP_N }}
+          MAX_SIM: ${{ inputs.MAX_SIM }}
+        run: |
+          echo "========================================="
+          echo "  GERAR PROXIMO CONCURSO - IA TREVO"
+          echo "========================================="
+          echo "Perfil   : ${PERFIL}"
+          echo "Janela   : ${JANELA}"
+          echo "per_brain: ${PER_BRAIN}"
+          echo "top_n    : ${TOP_N}"
+          echo "max_sim  : ${MAX_SIM}"
+          echo ""
+          
+          python START/gerar_proximo_concurso.py \
+            --both \
+            --perfil "${PERFIL}" \
+            --janela "${JANELA}" \
+            --per-brain "${PER_BRAIN}" \
+            --top-n "${TOP_N}" \
+            --max-sim "${MAX_SIM}" \
+            --salvar-db
+
+      - name: 📄 Upload dos relatórios gerados
+        uses: actions/upload-artifact@v4
+        with:
+          name: relatorios-proximo-concurso
+          path: reports/
