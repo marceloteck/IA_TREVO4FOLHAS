@@ -1,0 +1,3 @@
+>python -m training.trainer_v2
+ 
+>python -m training.trainer_v2 --limite 3

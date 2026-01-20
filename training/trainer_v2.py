@@ -3,8 +3,9 @@ from __future__ import annotations
 
 import argparse
 import time
+import inspect
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 from tqdm import tqdm
 
@@ -20,10 +21,7 @@ from training.brains.statistical.nucleo_satelites_brain import StatNucleoSatelit
 from training.brains.exploratory.total_dezenas_auto_brain import ExplorTotalDezenasAutoBrain
 from training.brains.statistical.elite_memory_brain import StatEliteMemoryBrain
 from training.brains.statistical.paridade_faixas_brain import StatParidadeFaixasBrain
-
-
-# (Opcional) se você tiver esse brain pronto, pode ligar:
-# from training.brains.statistical.pares_brain import StatParesBrain
+from training.brains.structural.pattern_shape_brain import StructuralPatternShapeBrain
 
 
 # ==========================
@@ -88,7 +86,6 @@ def _fetch_recent_results(conn, concurso_n: int, janela: int) -> List[List[int]]
         (int(concurso_n), int(janela)),
     )
     rows = cur.fetchall()
-    # veio DESC; devolve ASC para consistência
     rows = list(reversed(rows))
     return [[int(x) for x in r] for r in rows]
 
@@ -132,40 +129,39 @@ def _insert_tentativa(
 ) -> None:
     """
     Insere em tentativas no formato d1..d18 (15 ou 18)
+    (corrigido: placeholders automáticos -> nunca mais dá mismatch)
     """
     dezenas_sorted = sorted(int(x) for x in dezenas)
-    # preenche até 18 com None
     payload = dezenas_sorted + [None] * (18 - len(dezenas_sorted))
+
+    cols = [
+        "concurso_n", "concurso_n1", "tipo_jogo", "tentativa",
+        "d1","d2","d3","d4","d5","d6","d7","d8","d9","d10","d11","d12","d13","d14","d15","d16","d17","d18",
+        "acertos", "score", "score_tag", "brain_id", "tempo_exec", "timestamp"
+    ]
+
+    values = [
+        int(concurso_n),
+        int(concurso_n1),
+        int(tipo_jogo),
+        int(tentativa),
+        payload[0], payload[1], payload[2], payload[3], payload[4],
+        payload[5], payload[6], payload[7], payload[8], payload[9],
+        payload[10], payload[11], payload[12], payload[13], payload[14],
+        payload[15], payload[16], payload[17],
+        int(acertos),
+        float(score),
+        SCORE_TAG,
+        str(brain_id),
+        float(tempo_exec),
+        now_str(),
+    ]
+
+    placeholders = ",".join(["?"] * len(values))
+    sql = f"INSERT INTO tentativas ({','.join(cols)}) VALUES ({placeholders})"
+
     cur = conn.cursor()
-    cur.execute(
-        """
-        INSERT INTO tentativas (
-            concurso_n, concurso_n1, tipo_jogo, tentativa,
-            d1,d2,d3,d4,d5,d6,d7,d8,d9,d10,d11,d12,d13,d14,d15,d16,d17,d18,
-            acertos, score, score_tag, brain_id, tempo_exec, timestamp
-        ) VALUES (
-            ?, ?, ?, ?,
-            ?,?,?,?,?, ?,?,?,?,?, ?,?,?,?,?, ?,?,
-            ?, ?, ?, ?, ?, ?
-        )
-        """,
-        (
-            int(concurso_n),
-            int(concurso_n1),
-            int(tipo_jogo),
-            int(tentativa),
-            payload[0], payload[1], payload[2], payload[3], payload[4],
-            payload[5], payload[6], payload[7], payload[8], payload[9],
-            payload[10], payload[11], payload[12], payload[13], payload[14],
-            payload[15], payload[16], payload[17],
-            int(acertos),
-            float(score),
-            SCORE_TAG,
-            str(brain_id),
-            float(tempo_exec),
-            now_str(),
-        ),
-    )
+    cur.execute(sql, values)
     conn.commit()
 
 
@@ -181,7 +177,7 @@ def _insert_memoria_forte(
 ) -> bool:
     """
     Salva memoria_jogos (>= SALVAR_MEMORIA_MIN) usando INSERT OR IGNORE
-    Retorna True se inseriu, False se ignorou.
+    (corrigido: placeholders automáticos)
     """
     if int(acertos) < int(SALVAR_MEMORIA_MIN):
         return False
@@ -189,33 +185,31 @@ def _insert_memoria_forte(
     dezenas_sorted = sorted(int(x) for x in dezenas)
     payload = dezenas_sorted + [None] * (18 - len(dezenas_sorted))
 
+    cols = [
+        "concurso_n", "concurso_n1", "tipo_jogo",
+        "d1","d2","d3","d4","d5","d6","d7","d8","d9","d10","d11","d12","d13","d14","d15","d16","d17","d18",
+        "acertos", "peso", "origem", "timestamp"
+    ]
+
+    values = [
+        int(concurso_n),
+        int(concurso_n1),
+        int(tipo_jogo),
+        payload[0], payload[1], payload[2], payload[3], payload[4],
+        payload[5], payload[6], payload[7], payload[8], payload[9],
+        payload[10], payload[11], payload[12], payload[13], payload[14],
+        payload[15], payload[16], payload[17],
+        int(acertos),
+        float(peso),
+        str(origem),
+        now_str(),
+    ]
+
+    placeholders = ",".join(["?"] * len(values))
+    sql = f"INSERT OR IGNORE INTO memoria_jogos ({','.join(cols)}) VALUES ({placeholders})"
+
     cur = conn.cursor()
-    cur.execute(
-        """
-        INSERT OR IGNORE INTO memoria_jogos (
-            concurso_n, concurso_n1, tipo_jogo,
-            d1,d2,d3,d4,d5,d6,d7,d8,d9,d10,d11,d12,d13,d14,d15,d16,d17,d18,
-            acertos, peso, origem, timestamp
-        ) VALUES (
-            ?, ?, ?,
-            ?,?,?,?,?, ?,?,?,?,?, ?,?,?,?,?, ?,?,
-            ?, ?, ?, ?
-        )
-        """,
-        (
-            int(concurso_n),
-            int(concurso_n1),
-            int(tipo_jogo),
-            payload[0], payload[1], payload[2], payload[3], payload[4],
-            payload[5], payload[6], payload[7], payload[8], payload[9],
-            payload[10], payload[11], payload[12], payload[13], payload[14],
-            payload[15], payload[16], payload[17],
-            int(acertos),
-            float(peso),
-            str(origem),
-            now_str(),
-        ),
-    )
+    cur.execute(sql, values)
     conn.commit()
     return cur.rowcount > 0
 
@@ -226,12 +220,11 @@ def _build_context(conn, concurso_n: int, janela_recente: int) -> Dict[str, Any]
     - concurso_n
     - ultimo_resultado (N)
     - historico_recente (lista de resultados até N)
-    - freq_recente (dict) — leve, usado por brains que quiserem
+    - freq_recente (dict)
     """
     historico = _fetch_recent_results(conn, concurso_n=concurso_n, janela=janela_recente)
     ultimo = historico[-1] if historico else _fetch_result(conn, concurso_n) or []
 
-    # frequência recente leve
     freq: Dict[int, int] = {i: 0 for i in range(1, 26)}
     for r in historico:
         for d in r:
@@ -240,8 +233,8 @@ def _build_context(conn, concurso_n: int, janela_recente: int) -> Dict[str, Any]
     return {
         "concurso_n": int(concurso_n),
         "ultimo_resultado": [int(x) for x in ultimo],
-        "historico_recente": historico,     # lista de listas
-        "freq_recente": freq,               # dict simples
+        "historico_recente": historico,
+        "freq_recente": freq,
         "janela_recente": int(janela_recente),
     }
 
@@ -252,13 +245,6 @@ def _rank_and_select(
     avaliar_top_k: int,
     tipo: int,
 ) -> List[Dict[str, Any]]:
-    """
-    candidatos: lista de dicts do BrainHub:
-      {"jogo":[...], "score":..., "brain_id":..., "rel":...}
-    Avalia acertos em N+1 e ordena:
-      1) acertos
-      2) score do hub
-    """
     top = candidatos[: int(avaliar_top_k)]
     avaliados: List[Dict[str, Any]] = []
     for c in top:
@@ -277,6 +263,26 @@ def _rank_and_select(
     return avaliados
 
 
+# =========================================================
+# ✅ INSTANCIAÇÃO ROBUSTA DE CÉREBROS (RESOLVE SEU ERRO)
+# =========================================================
+def _instantiate_brain(brain_cls, conn, **kwargs):
+    """
+    Instancia qualquer cérebro de forma segura:
+    - sempre passa conn
+    - só passa kwargs que existirem no __init__
+    - evita quebrar o trainer quando o cérebro não tem o argumento
+    """
+    try:
+        sig = inspect.signature(brain_cls.__init__)
+        accepted = set(sig.parameters.keys())  # inclui self
+        filtered = {k: v for k, v in kwargs.items() if k in accepted}
+        return brain_cls(conn, **filtered)
+    except TypeError:
+        # fallback: tenta só com conn
+        return brain_cls(conn)
+
+
 # ==========================
 # TREINO (N -> N+1)
 # ==========================
@@ -286,7 +292,7 @@ def treinar_pendencias(conn, limite_concursos: Optional[int] = None) -> Dict[str
         raise RuntimeError("❌ Banco tem poucos concursos. Rode START/startBD.py e/ou START/update_concursos.py.")
 
     ck = _get_checkpoint(conn)
-    max_treino = concursos[-2]  # penúltimo (precisa existir N+1)
+    max_treino = concursos[-2]
     pendentes = [c for c in concursos if c > ck and c <= max_treino]
 
     if limite_concursos is not None:
@@ -305,17 +311,19 @@ def treinar_pendencias(conn, limite_concursos: Optional[int] = None) -> Dict[str
 
     # BrainHub + brains
     hub = BrainHub(conn)
-    hub.register(StatFreqGlobalBrain(conn))
-    hub.register(StatFreqRecenteBrain(conn, janela=120))
-    hub.register(TemporalAtrasoBrain(conn))
-    hub.register(StatNucleoSatelitesBrain(conn, janela=300))
-    hub.register(ExplorTotalDezenasAutoBrain(conn))
-    hub.register(StatEliteMemoryBrain(conn))
-    hub.register(StatParidadeFaixasBrain(conn))
 
+    # IMPORTANTÍSSIMO: usamos instanciação adaptativa (não quebra por kwargs)
+    hub.register(_instantiate_brain(StatFreqGlobalBrain, conn))
+    hub.register(_instantiate_brain(StatFreqRecenteBrain, conn, janela=120))
+    hub.register(_instantiate_brain(TemporalAtrasoBrain, conn))
 
-    # Se existir no seu projeto e estiver pronto:
-    # hub.register(StatParesBrain(conn))
+    # ✅ aqui resolve o seu problema: se o cérebro não aceitar janela, ele ignora
+    hub.register(_instantiate_brain(StatNucleoSatelitesBrain, conn, janela=300))
+
+    hub.register(_instantiate_brain(ExplorTotalDezenasAutoBrain, conn))
+    hub.register(_instantiate_brain(StatEliteMemoryBrain, conn))
+    hub.register(_instantiate_brain(StatParidadeFaixasBrain, conn))
+    hub.register(_instantiate_brain(StructuralPatternShapeBrain, conn))
 
     hub.load_all()  # carrega estado persistido dos cérebros
 
@@ -383,7 +391,6 @@ def treinar_pendencias(conn, limite_concursos: Optional[int] = None) -> Dict[str
                 tempo_exec=tempo_exec,
             )
 
-            # memória forte
             if acertos >= SALVAR_MEMORIA_MIN:
                 ok = _insert_memoria_forte(
                     conn,
@@ -403,7 +410,6 @@ def treinar_pendencias(conn, limite_concursos: Optional[int] = None) -> Dict[str
             if acertos == 15:
                 total_15 += 1
 
-            # crédito + aprendizado incremental (N->N+1)
             hub.learn(
                 concurso_n=concurso_n,
                 jogo=jogo,
@@ -415,10 +421,8 @@ def treinar_pendencias(conn, limite_concursos: Optional[int] = None) -> Dict[str
 
             tentativa += 1
 
-        # checkpoint sempre avança por concurso treinado
         _set_checkpoint(conn, concurso_n, etapa="trainer_v2")
 
-        # persiste estado dos cérebros periodicamente
         if idx % int(PERSISTIR_A_CADA) == 0:
             hub.save_all()
 
@@ -426,7 +430,6 @@ def treinar_pendencias(conn, limite_concursos: Optional[int] = None) -> Dict[str
         melhor18 = top18[0]["acertos"] if top18 else 0
         pbar.set_postfix({"melhor15": melhor15, "melhor18": melhor18, "mem+": total_mem, "14+": total_14, "15": total_15})
 
-    # salva estado final
     hub.save_all()
 
     dur = time.time() - t0_global
@@ -472,12 +475,10 @@ def run(loop: bool, sleep_min: int, limite_concursos: Optional[int]) -> None:
         if not loop:
             break
 
-        # Se não treinou nada, dorme e tenta de novo
         if resumo.get("message") == "Sem novos concursos para treinar.":
             _log(f"🕒 Sem novos concursos. Dormindo {sleep_min} min...")
             time.sleep(max(1, int(sleep_min)) * 60)
         else:
-            # treinou algo: pequena pausa para aliviar disco/CPU
             time.sleep(2)
 
 
