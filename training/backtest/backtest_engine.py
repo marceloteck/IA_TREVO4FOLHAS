@@ -158,20 +158,27 @@ def build_context(conn: sqlite3.Connection, concurso_n: int, janela_recente: int
 
 
 def insert_tentativa(
-    conn: sqlite3.Connection,
+    conn,
     concurso_n: int,
     concurso_n1: int,
     tipo_jogo: int,
     tentativa: int,
-    dezenas: List[int],
+    dezenas: list[int],
     acertos: int,
     score: float,
     score_tag: str,
     brain_id: str,
     tempo_exec: float,
+    timestamp: str,
 ) -> None:
+    """
+    Insere em 'tentativas' usando o formato d1..d18.
+    Compatível com o schema atual do projeto (28 colunas no insert).
+    """
     dezenas_sorted = sorted(int(x) for x in dezenas)
     payload = dezenas_sorted + [None] * (18 - len(dezenas_sorted))
+    if len(payload) != 18:
+        raise ValueError(f"payload inválido: esperado 18 campos, veio {len(payload)}")
 
     cur = conn.cursor()
     cur.execute(
@@ -183,7 +190,7 @@ def insert_tentativa(
         ) VALUES (
             ?, ?, ?, ?,
             ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,
-            ?,?,?,?,?,?,?
+            ?, ?, ?, ?, ?, ?
         )
         """,
         (
@@ -200,10 +207,11 @@ def insert_tentativa(
             str(score_tag),
             str(brain_id),
             float(tempo_exec),
-            now_str(),
+            str(timestamp),
         ),
     )
     conn.commit()
+
 
 
 def insert_memoria_forte(
@@ -404,14 +412,15 @@ def run_one_concurso(
                 conn=conn,
                 concurso_n=concurso_n,
                 concurso_n1=concurso_n + 1,
-                tipo_jogo=tipo,
+                tipo_jogo=size,
                 tentativa=tentativa,
                 dezenas=jogo,
                 acertos=acertos,
                 score=score,
-                score_tag=cfg.score_tag,
-                brain_id=brain_id,
-                tempo_exec=tempo_exec,
+                score_tag=RUN_TAG,          # ex: "backtest_v1"
+                brain_id=brain_id,          # ex: item["brain_id"]
+                tempo_exec=tempo_exec,      # float
+                timestamp=now_str(),        # string
             )
 
             if insert_memoria_forte(
