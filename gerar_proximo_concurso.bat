@@ -1,15 +1,54 @@
 @echo off
+setlocal enabledelayedexpansion
+
 echo =========================================
-echo   GERAR JOGOS - PROXIMO CONCURSO (BRAINHUB)
+echo   GERAR PROXIMO CONCURSO - IA TREVO
 echo =========================================
 
-call venv\Scripts\activate
+REM Ir para a pasta do projeto (onde está este .bat)
+cd /d "%~dp0"
 
-REM 10 jogos de 15 dezenas (padrão)
-python START\gerar_proximo_concurso.py --size 15 --qtd 10
+REM Ativar venv (se existir)
+if exist "venv\Scripts\activate.bat" (
+  echo [OK] Ativando venv...
+  call "venv\Scripts\activate.bat"
+) else (
+  echo [AVISO] venv nao encontrado. Rodando com Python do sistema...
+)
+
+REM Config padrao (edite se quiser)
+set PERFIL=balanceado
+set JANELA=300
+set PER_BRAIN=120
+set TOP_N=250
+set MAX_SIM=0.78
+
+echo.
+echo [INFO] Perfil   : %PERFIL%
+echo [INFO] Janela   : %JANELA%
+echo [INFO] per_brain: %PER_BRAIN%
+echo [INFO] top_n    : %TOP_N%
+echo [INFO] max_sim  : %MAX_SIM%
+echo.
+
+echo [RUN] Gerando jogos (15 e 18) e salvando no banco...
+python "START\gerar_proximo_concurso.py" --both --perfil %PERFIL% --janela %JANELA% --per-brain %PER_BRAIN% --top-n %TOP_N% --max-sim %MAX_SIM% --salvar-db
+
+if errorlevel 1 (
+  echo.
+  echo =========================================
+  echo [ERRO] Falhou ao gerar os jogos.
+  echo Dica: rode antes START\startBD.py e depois tente novamente.
+  echo =========================================
+  pause
+  exit /b 1
+)
 
 echo.
 echo =========================================
-echo   RELATORIO SALVO EM /reports
+echo [OK] Geracao concluida com sucesso!
+echo Veja os relatorios em: reports\
 echo =========================================
+
 pause
+endlocal
