@@ -1,6 +1,10 @@
 # training/trainer_v2.py
 from __future__ import annotations
 
+import os
+import subprocess
+from pathlib import Path
+
 import argparse
 import time
 import inspect
@@ -34,6 +38,50 @@ AVALIAR_TOP_K = 40                   # quantos avaliar por tamanho (custo contro
 SALVAR_MEMORIA_MIN = 11              # salva memoria_jogos a partir de 11 acertos
 PERSISTIR_A_CADA = 5                 # salva estados + checkpoint a cada X concursos
 SCORE_TAG = "trainer_v2_hub"         # tag para auditoria
+
+
+# ==========================
+# COMMIT AUTOMATICO ACTIONS
+# ==========================
+def _try_commit_if_good_every(
+    last_ts: float,
+    interval_min: int = 30,
+) -> float:
+    """
+    Tenta rodar scripts/commit_if_good.py de tempos em tempos.
+    - Só faz sentido no GitHub Actions (GITHUB_ACTIONS=true).
+    - Se falhar, não quebra o treinamento.
+    Retorna o novo timestamp de referência.
+    """
+    if interval_min <= 0:
+        return last_ts
+
+    # Só roda no GitHub Actions (evita bagunçar máquina local)
+    if os.environ.get("GITHUB_ACTIONS", "").lower() != "true":
+        return last_ts
+
+    now = time.time()
+    if (now - last_ts) < (interval_min * 60):
+        return last_ts
+
+    try:
+        root = Path(__file__).resolve().parents[1]  # raiz do repo
+        script = root / "scripts" / "commit_if_good.py"
+        if not script.exists():
+            _log(f"⚠️ commit_if_good.py não encontrado em {script}")
+            return now
+
+        _log("🧾 Tentando commit automático (commit_if_good.py)...")
+        # importante: roda com cwd na raiz do repo
+        subprocess.run(
+            [sys.executable, str(script)],
+            cwd=str(root),
+            check=False,
+        )
+    except Exception as e:
+        _log(f"⚠️ Falha ao tentar commit automático: {e}")
+
+    return now
 
 
 # ==========================
@@ -333,6 +381,7 @@ def treinar_pendencias(conn, limite_concursos: Optional[int] = None) -> Dict[str
 
     pbar = tqdm(pendentes, desc="Treinando concursos", unit="concurso")
     t0_global = time.time()
+    last_commit_ts = time.time()
 
     for idx, concurso_n in enumerate(pbar, 1):
         resultado_n1 = _fetch_result(conn, concurso_n + 1)
@@ -425,6 +474,9 @@ def treinar_pendencias(conn, limite_concursos: Optional[int] = None) -> Dict[str
 
         if idx % int(PERSISTIR_A_CADA) == 0:
             hub.save_all()
+
+        # ✅ tenta commit a cada 30 min (só no GitHub Actions)
+        last_commit_ts = _try_commit_if_good_every(last_commit_ts, interval_min=29)
 
         melhor15 = top15[0]["acertos"] if top15 else 0
         melhor18 = top18[0]["acertos"] if top18 else 0
