@@ -1,32 +1,40 @@
-name: Manual Backtest (BrainHub)
+name: Backtest Manual (Commit se tiver 13+)
 
 on:
   workflow_dispatch:
     inputs:
       hours:
-        description: "Quantas horas rodar (ex: 0.25 = 15min)"
+        description: "Quantas horas rodar"
         required: true
-        default: "0.25"
+        default: "5.0"
       block_size:
-        description: "Tamanho do bloco por ciclo (ex: 250)"
+        description: "Tamanho do bloco"
         required: true
         default: "250"
       aggressive:
-        description: "Exploração mais pesada (true/false)"
+        description: "Modo agressivo"
         required: true
-        default: "false"
-      seed:
-        description: "Seed opcional (vazio = aleatório)"
-        required: false
-        default: ""
+        default: "true"
+      min_mem:
+        description: "Salvar memoria a partir de (13 recomendado)"
+        required: true
+        default: "13"
+      min_new_13:
+        description: "Qtd mínima de novas memórias 13+ para permitir commit (evita spam)"
+        required: true
+        default: "10"
+
+permissions:
+  contents: write
 
 jobs:
-  run-backtest:
+  backtest:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -38,33 +46,28 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Init DB (schema + import CSV)
+      - name: Start DB (schema + import CSV)
         run: |
           python START/startBD.py
 
-      - name: Run Backtest Engine
+      - name: Run backtest
+        shell: bash
         run: |
           HOURS="${{ inputs.hours }}"
           BLOCK="${{ inputs.block_size }}"
           AGG="${{ inputs.aggressive }}"
-          SEED="${{ inputs.seed }}"
+          MIN_MEM="${{ inputs.min_mem }}"
 
-          CMD="python -m training.backtest.backtest_engine --hours ${HOURS} --block-size ${BLOCK}"
+          CMD="python -m training.backtest.backtest_engine --hours ${HOURS} --block-size ${BLOCK} --min-mem ${MIN_MEM}"
           if [ "${AGG}" = "true" ]; then
             CMD="${CMD} --aggressive"
-          fi
-          if [ -n "${SEED}" ]; then
-            CMD="${CMD} --seed ${SEED}"
           fi
 
           echo "Running: ${CMD}"
           ${CMD}
 
-      - name: Upload DB + Reports
-        uses: actions/upload-artifact@v4
-        with:
-          name: treino-db-e-reports
-          path: |
-            data/BD/lotofacil.db
-            reports
-          if-no-files-found: warn
+      - name: Commit somente se teve ganho 13+/14+/15
+        env:
+          MIN_NEW_13: ${{ inputs.min_new_13 }}
+        run: |
+          python scripts/commit_if_good.py
