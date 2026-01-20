@@ -76,3 +76,9 @@ jobs:
           MIN_NEW_13: ${{ github.event.inputs.min_new_13 || '10' }}
         run: |
           python scripts/commit_if_good.py
+
+      - name: Upload DB artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: lotofacil-db
+          path: data/BD/lotofacil.db
