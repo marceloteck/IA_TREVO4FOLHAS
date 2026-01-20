@@ -56,6 +56,10 @@ def safe_table_exists(conn: sqlite3.Connection, name: str) -> bool:
     return cur.fetchone() is not None
 
 
+def _placeholders(n: int) -> str:
+    return ",".join(["?"] * int(n))
+
+
 # ==========================
 # DB helpers (backtest)
 # ==========================
@@ -158,12 +162,12 @@ def build_context(conn: sqlite3.Connection, concurso_n: int, janela_recente: int
 
 
 def insert_tentativa(
-    conn,
+    conn: sqlite3.Connection,
     concurso_n: int,
     concurso_n1: int,
     tipo_jogo: int,
     tentativa: int,
-    dezenas: list[int],
+    dezenas: List[int],
     acertos: int,
     score: float,
     score_tag: str,
@@ -173,45 +177,28 @@ def insert_tentativa(
 ) -> None:
     """
     Insere em 'tentativas' usando o formato d1..d18.
-    Compatível com o schema atual do projeto (28 colunas no insert).
+    BLINDADO contra mismatch de colunas/values.
     """
-    dezenas_sorted = sorted(int(x) for x in dezenas)
+    dezenas_sorted = sorted(int(x) for x in dezenas if x is not None)
     payload = dezenas_sorted + [None] * (18 - len(dezenas_sorted))
-    if len(payload) != 18:
-        raise ValueError(f"payload inválido: esperado 18 campos, veio {len(payload)}")
+    payload = payload[:18]
 
-    cur = conn.cursor()
-    cur.execute(
-        """
-        INSERT INTO tentativas (
-            concurso_n, concurso_n1, tipo_jogo, tentativa,
-            d1,d2,d3,d4,d5,d6,d7,d8,d9,d10,d11,d12,d13,d14,d15,d16,d17,d18,
-            acertos, score, score_tag, brain_id, tempo_exec, timestamp
-        ) VALUES (
-            ?, ?, ?, ?,
-            ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,
-            ?, ?, ?, ?, ?, ?
-        )
-        """,
-        (
-            int(concurso_n),
-            int(concurso_n1),
-            int(tipo_jogo),
-            int(tentativa),
-            payload[0], payload[1], payload[2], payload[3], payload[4],
-            payload[5], payload[6], payload[7], payload[8], payload[9],
-            payload[10], payload[11], payload[12], payload[13], payload[14],
-            payload[15], payload[16], payload[17],
-            int(acertos),
-            float(score),
-            str(score_tag),
-            str(brain_id),
-            float(tempo_exec),
-            str(timestamp),
-        ),
+    cols = (
+        ["concurso_n", "concurso_n1", "tipo_jogo", "tentativa"]
+        + [f"d{i}" for i in range(1, 19)]
+        + ["acertos", "score", "score_tag", "brain_id", "tempo_exec", "timestamp"]
     )
-    conn.commit()
 
+    values = (
+        [int(concurso_n), int(concurso_n1), int(tipo_jogo), int(tentativa)]
+        + payload
+        + [int(acertos), float(score), str(score_tag), str(brain_id), float(tempo_exec), str(timestamp)]
+    )
+
+    sql = f"INSERT INTO tentativas ({','.join(cols)}) VALUES ({_placeholders(len(values))})"
+    cur = conn.cursor()
+    cur.execute(sql, tuple(values))
+    conn.commit()
 
 
 def insert_memoria_forte(
@@ -228,36 +215,25 @@ def insert_memoria_forte(
     if int(acertos) < int(min_mem):
         return False
 
-    dezenas_sorted = sorted(int(x) for x in dezenas)
+    dezenas_sorted = sorted(int(x) for x in dezenas if x is not None)
     payload = dezenas_sorted + [None] * (18 - len(dezenas_sorted))
+    payload = payload[:18]
 
-    cur = conn.cursor()
-    cur.execute(
-        """
-        INSERT OR IGNORE INTO memoria_jogos (
-            concurso_n, concurso_n1, tipo_jogo,
-            d1,d2,d3,d4,d5,d6,d7,d8,d9,d10,d11,d12,d13,d14,d15,d16,d17,d18,
-            acertos, peso, origem, timestamp
-        ) VALUES (
-            ?, ?, ?,
-            ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,
-            ?,?,?,?
-        )
-        """,
-        (
-            int(concurso_n),
-            int(concurso_n1),
-            int(tipo_jogo),
-            payload[0], payload[1], payload[2], payload[3], payload[4],
-            payload[5], payload[6], payload[7], payload[8], payload[9],
-            payload[10], payload[11], payload[12], payload[13], payload[14],
-            payload[15], payload[16], payload[17],
-            int(acertos),
-            float(peso),
-            str(origem),
-            now_str(),
-        ),
+    cols = (
+        ["concurso_n", "concurso_n1", "tipo_jogo"]
+        + [f"d{i}" for i in range(1, 19)]
+        + ["acertos", "peso", "origem", "timestamp"]
     )
+
+    values = (
+        [int(concurso_n), int(concurso_n1), int(tipo_jogo)]
+        + payload
+        + [int(acertos), float(peso), str(origem), now_str()]
+    )
+
+    sql = f"INSERT OR IGNORE INTO memoria_jogos ({','.join(cols)}) VALUES ({_placeholders(len(values))})"
+    cur = conn.cursor()
+    cur.execute(sql, tuple(values))
     conn.commit()
     return cur.rowcount > 0
 
@@ -277,6 +253,7 @@ def register_brains_auto(conn, hub: BrainHub) -> List[str]:
             hub.register(b)
             loaded.append(getattr(b, "id", f"{import_path}.{cls_name}"))
         except Exception:
+            # não explode: backtest precisa continuar mesmo se algum cérebro falhar
             pass
 
     # Base confirmados
@@ -385,14 +362,17 @@ def run_one_concurso(
 
     context = build_context(conn, concurso_n, cfg.janela)
 
+    # ✅ RUN_TAG definido (corrige NameError)
+    RUN_TAG = str(cfg.score_tag)
+
     t0 = time.time()
     cand15 = hub.generate_games(context=context, size=15, per_brain=cfg.per_brain, top_n=cfg.top_n)
     cand18 = hub.generate_games(context=context, size=18, per_brain=cfg.per_brain, top_n=cfg.top_n)
     tempo_exec = time.time() - t0
 
     # avalia apenas top K candidatos (controle de custo)
-    cand15 = cand15[:avaliar_top_k]
-    cand18 = cand18[:avaliar_top_k]
+    cand15 = (cand15 or [])[: int(avaliar_top_k)]
+    cand18 = (cand18 or [])[: int(avaliar_top_k)]
 
     mem = a14 = a15 = 0
     tentativa = 1
@@ -400,19 +380,18 @@ def run_one_concurso(
     def _process(cands: List[Dict[str, Any]], tipo: int):
         nonlocal mem, a14, a15, tentativa
 
-        tipo = int(tipo)  # garante 15/18
+        tipo = int(tipo)
 
         for c in cands:
             jogo = [int(x) for x in c.get("jogo", []) if x is not None]
 
-            # valida tamanho mínimo (15) e remove duplicatas
             if len(jogo) < 15:
                 continue
+
             jogo = sorted(set(jogo))
 
-            # garante coerência com o "tipo" (15 ou 18)
+            # força exatamente 15/18
             if tipo in (15, 18) and len(jogo) != tipo:
-                # se vier diferente, ajusta sem quebrar (corta ou ignora)
                 if len(jogo) > tipo:
                     jogo = jogo[:tipo]
                 else:
@@ -422,20 +401,19 @@ def run_one_concurso(
             score = float(c.get("score", 0.0))
             brain_id = str(c.get("brain_id", "unknown"))
 
-            # ✅ CORREÇÃO: tipo_jogo deve usar "tipo" (não existe "size" aqui)
             insert_tentativa(
                 conn=conn,
                 concurso_n=concurso_n,
                 concurso_n1=concurso_n + 1,
-                tipo_jogo=tipo,               # ✅ corrigido
+                tipo_jogo=tipo,
                 tentativa=tentativa,
                 dezenas=jogo,
                 acertos=acertos,
                 score=score,
-                score_tag=RUN_TAG,            # ex: "backtest_v1"
-                brain_id=brain_id,            # ex: item["brain_id"]
-                tempo_exec=tempo_exec,        # float
-                timestamp=now_str(),          # string
+                score_tag=RUN_TAG,      # ✅ agora existe
+                brain_id=brain_id,
+                tempo_exec=tempo_exec,
+                timestamp=now_str(),
             )
 
             if insert_memoria_forte(
@@ -467,13 +445,10 @@ def run_one_concurso(
 
             tentativa += 1
 
-
-    # chamadas (mantém igual)
     _process(cand15, 15)
     _process(cand18, 18)
 
     return {"mem": mem, "a14": a14, "a15": a15}
-
 
 
 # ==========================
@@ -567,11 +542,11 @@ def main() -> None:
                 break
 
             # seleciona bloco circular
-            block = []
+            block: List[int] = []
             for _ in range(max(1, int(args.block_size))):
                 if pos >= len(trainable):
                     pos = 0
-                block.append(trainable[pos])
+                block.append(int(trainable[pos]))
                 pos += 1
 
             # cada bloco usa uma configuração exploratória diferente
@@ -613,7 +588,10 @@ def main() -> None:
                     hub.save_all()
 
                 if i % 25 == 0:
-                    log(f"↪ progresso bloco: {i}/{len(block)} | steps={steps_done} | mem+={total_mem} | 14+={total_14} | 15={total_15}")
+                    log(
+                        f"↪ progresso bloco: {i}/{len(block)} | steps={steps_done} | "
+                        f"mem+={total_mem} | 14+={total_14} | 15={total_15}"
+                    )
 
             # salva no final de cada bloco
             hub.save_all()
@@ -624,7 +602,7 @@ def main() -> None:
         log("=========================================")
         log(f"⏱️ Duração total  : {dur:.2f}s")
         log(f"🔢 Steps          : {steps_done}")
-        log(f"💾 Memórias (>=11): {total_mem}")
+        log(f"💾 Memórias (>=min_mem): {total_mem}")
         log(f"🔥 14+            : {total_14}")
         log(f"🏆 15             : {total_15}")
         log(f"📌 checkpoint_bt  : {get_backtest_checkpoint(conn)}")
