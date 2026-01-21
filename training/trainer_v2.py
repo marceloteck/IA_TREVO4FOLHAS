@@ -35,7 +35,7 @@ JANELA_RECENTE = 300                 # base de contexto (histórico recente)
 CANDIDATOS_POR_CEREBRO = 80          # candidatos por brain por tamanho
 TOP_N_POR_TAMANHO = 60               # pós-hub (diversidade aplicada)
 AVALIAR_TOP_K = 40                   # quantos avaliar por tamanho (custo controlado)
-SALVAR_MEMORIA_MIN = 11              # salva memoria_jogos a partir de 11 acertos
+SALVAR_MEMORIA_MIN = 12              # salva memoria_jogos a partir de 11 acertos
 PERSISTIR_A_CADA = 5                 # salva estados + checkpoint a cada X concursos
 SCORE_TAG = "trainer_v2_hub"         # tag para auditoria
 

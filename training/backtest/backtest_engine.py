@@ -28,7 +28,7 @@ from training.utils.comparador import contar_acertos
 # ==========================
 DEFAULT_BLOCK_SIZE = 250
 DEFAULT_SAVE_EVERY = 10
-DEFAULT_MIN_MEM = 11
+DEFAULT_MIN_MEM = 12
 DEFAULT_MAX_SIM = 0.78
 
 # Candidatos / custo
