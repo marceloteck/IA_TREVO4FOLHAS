@@ -37,16 +37,20 @@ concurrency:
   group: treino-backtest-5h
   cancel-in-progress: false
 
+permissions:
+  contents: write
+
 jobs:
   train:
     runs-on: ubuntu-latest
-    timeout-minutes: 360  # margem (6h) pra não cortar cedo
+    timeout-minutes: 360
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          persist-credentials: true
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -120,3 +124,32 @@ jobs:
             reports/**
             scripts/ci_good_marker.json
           if-no-files-found: warn
+
+      - name: Commit & Push (final do treinamento) — INCLUI data/BD/temp
+        if: success()
+        env:
+          BRANCH_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+
+          echo "Configurando git..."
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git checkout "${BRANCH_NAME}"
+          git pull --rebase origin "${BRANCH_NAME}" || true
+
+          # (Opcional) não versionar arquivos temporários do SQLite se existirem
+          # Eles NÃO são o DB principal, só arquivos de runtime.
+          git add -A
+          git reset -- 'data/BD/temp/**/*.db-wal' 'data/BD/temp/**/*.db-shm' 'data/BD/temp/**/*.db-journal' 2>/dev/null || true
+          git restore --staged 'data/BD/temp/**/*.db-wal' 'data/BD/temp/**/*.db-shm' 'data/BD/temp/**/*.db-journal' 2>/dev/null || true
+
+          if git diff --cached --quiet; then
+            echo "Nada para commitar."
+            exit 0
+          fi
+
+          MSG="🧠 Treinamento finalizado | TS=${TS} | run_id=${GITHUB_RUN_ID}"
+          git commit -m "${MSG}"
+          git push origin "${BRANCH_NAME}"
