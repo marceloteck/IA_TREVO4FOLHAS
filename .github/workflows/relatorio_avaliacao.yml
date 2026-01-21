@@ -1,0 +1,81 @@
+name: Relatorio de Avaliacao Manual
+
+on:
+  workflow_dispatch:
+    inputs:
+      janela:
+        description: "Janela de historico recente"
+        required: true
+        default: "300"
+      candidatos:
+        description: "Candidatos por cerebro"
+        required: true
+        default: "80"
+      top_n:
+        description: "Top N por tamanho"
+        required: true
+        default: "60"
+      avaliar_top_k:
+        description: "Quantos candidatos avaliar"
+        required: true
+        default: "40"
+      max_concursos:
+        description: "Avalia os ultimos N concursos"
+        required: true
+        default: "200"
+      exploration_rate:
+        description: "Taxa de exploracao do BrainHub"
+        required: true
+        default: "0.08"
+      simular_aprendizado:
+        description: "Simular aprendizado (true/false)"
+        required: true
+        default: "false"
+
+jobs:
+  relatorio:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Start DB (schema + import CSV)
+        run: |
+          python START/startBD.py
+
+      - name: Gerar relatorio de avaliacao
+        shell: bash
+        run: |
+          export PYTHONPATH="${PYTHONPATH:-.}"
+          JANELA="${{ github.event.inputs.janela || '300' }}"
+          CANDIDATOS="${{ github.event.inputs.candidatos || '80' }}"
+          TOP_N="${{ github.event.inputs.top_n || '60' }}"
+          AVALIAR_TOP_K="${{ github.event.inputs.avaliar_top_k || '40' }}"
+          MAX_CONCURSOS="${{ github.event.inputs.max_concursos || '200' }}"
+          EXPLORATION="${{ github.event.inputs.exploration_rate || '0.08' }}"
+          SIMULAR="${{ github.event.inputs.simular_aprendizado || 'false' }}"
+
+          CMD="python scripts/avaliar_desempenho.py --janela ${JANELA} --candidatos ${CANDIDATOS} --top-n ${TOP_N} --avaliar-top-k ${AVALIAR_TOP_K} --max-concursos ${MAX_CONCURSOS} --exploration-rate ${EXPLORATION} --salvar-relatorio reports/relatorio_avaliacao.json"
+          if [ "${SIMULAR}" = "true" ]; then
+            CMD="${CMD} --simular-aprendizado"
+          fi
+          echo "Running: ${CMD}"
+          ${CMD}
+
+      - name: Upload relatorio
+        uses: actions/upload-artifact@v4
+        with:
+          name: relatorio-avaliacao
+          path: reports/relatorio_avaliacao.json
