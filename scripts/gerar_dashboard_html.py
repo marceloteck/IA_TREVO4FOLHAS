@@ -44,6 +44,16 @@ def main() -> None:
     report_18 = load_report(REPORT_18)
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
+    def build_brain_list(title: str, report: dict | None, key: str) -> str:
+        if not report or not report.get("brains"):
+            return f"<div class='card'><h3>{title}</h3><p class='muted'>Sem dados de cérebros.</p></div>"
+        items = list(report["brains"].items())[:8]
+        rows = "".join(
+            f"<li><strong>{brain_id}</strong> — Top1: {info.get(f'top1_{key}', 0)} | Gerados: {info.get(f'generated_{key}', 0)} | Média acertos (topK): {info.get(f'avg_acertos_topk_{key}', 0)}</li>"
+            for brain_id, info in items
+        )
+        return f"<div class='card'><h3>{title}</h3><ul class='list'>{rows}</ul></div>"
+
     html = f"""
     <!DOCTYPE html>
     <html lang="pt-BR">
@@ -105,6 +115,17 @@ def main() -> None:
           .metric span {{
             color: var(--muted);
           }}
+          .list {{
+            list-style: none;
+            padding: 0;
+            margin: 0;
+          }}
+          .list li {{
+            padding: 6px 0;
+            border-bottom: 1px solid rgba(148, 163, 184, 0.15);
+            font-size: 13px;
+            color: var(--muted);
+          }}
           .muted {{
             color: var(--muted);
             font-size: 12px;
@@ -120,6 +141,10 @@ def main() -> None:
           <section class="grid">
             {build_section("Relatório 15 dezenas", report_15, "15")}
             {build_section("Relatório 18 dezenas", report_18, "18")}
+          </section>
+          <section class="grid">
+            {build_brain_list("Top cérebros (15 dezenas)", report_15, "15")}
+            {build_brain_list("Top cérebros (18 dezenas)", report_18, "18")}
           </section>
         </main>
       </body>

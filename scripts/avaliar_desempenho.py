@@ -100,6 +100,23 @@ def selecionar_concursos(
     return concursos
 
 
+def _brain_metrics() -> Dict[str, Dict[str, Any]]:
+    return defaultdict(
+        lambda: {
+            "generated_15": 0,
+            "generated_18": 0,
+            "top1_15": 0,
+            "top1_18": 0,
+            "topk_sum_15": 0,
+            "topk_count_15": 0,
+            "topk_best_15": 0,
+            "topk_sum_18": 0,
+            "topk_count_18": 0,
+            "topk_best_18": 0,
+        }
+    )
+
+
 def avaliar(
     conn,
     janela: int,
@@ -113,6 +130,7 @@ def avaliar(
     resultados = {15: ResultadoTipo(), 18: ResultadoTipo()}
     distribuicao = {15: Counter(), 18: Counter()}
     brains_rank = defaultdict(int)
+    brains_stats = _brain_metrics()
 
     hub = build_hub(conn, exploration_rate=exploration_rate)
 
@@ -130,6 +148,10 @@ def avaliar(
                 per_brain=candidatos_por_cerebro,
                 top_n=top_n,
             )
+            for item in candidatos:
+                key = "generated_15" if tamanho == 15 else "generated_18"
+                brains_stats[item["brain_id"]][key] += 1
+
             avaliados = _rank_and_select(candidatos, resultado_n1, avaliar_top_k, tipo=tamanho)
             if not avaliados:
                 continue
@@ -138,6 +160,25 @@ def avaliar(
             resultados[tamanho].registrar(acertos)
             distribuicao[tamanho][acertos] += 1
             brains_rank[str(melhor["brain_id"])] += 1
+            top_key = "top1_15" if tamanho == 15 else "top1_18"
+            brains_stats[melhor["brain_id"]][top_key] += 1
+
+            for item in avaliados:
+                acertos_item = int(item["acertos"])
+                if tamanho == 15:
+                    brains_stats[item["brain_id"]]["topk_sum_15"] += acertos_item
+                    brains_stats[item["brain_id"]]["topk_count_15"] += 1
+                    brains_stats[item["brain_id"]]["topk_best_15"] = max(
+                        brains_stats[item["brain_id"]]["topk_best_15"],
+                        acertos_item,
+                    )
+                else:
+                    brains_stats[item["brain_id"]]["topk_sum_18"] += acertos_item
+                    brains_stats[item["brain_id"]]["topk_count_18"] += 1
+                    brains_stats[item["brain_id"]]["topk_best_18"] = max(
+                        brains_stats[item["brain_id"]]["topk_best_18"],
+                        acertos_item,
+                    )
 
             if simular_aprendizado:
                 for item in avaliados:
@@ -168,6 +209,29 @@ def avaliar(
             "q15+": sum(v for k, v in data.contagens.items() if k >= 15),
         }
 
+    brains_output = {}
+    for brain_id, stats in brains_stats.items():
+        avg_15 = (
+            stats["topk_sum_15"] / stats["topk_count_15"]
+            if stats["topk_count_15"] > 0
+            else 0.0
+        )
+        avg_18 = (
+            stats["topk_sum_18"] / stats["topk_count_18"]
+            if stats["topk_count_18"] > 0
+            else 0.0
+        )
+        brains_output[brain_id] = {
+            "generated_15": stats["generated_15"],
+            "generated_18": stats["generated_18"],
+            "top1_15": stats["top1_15"],
+            "top1_18": stats["top1_18"],
+            "avg_acertos_topk_15": round(avg_15, 4),
+            "avg_acertos_topk_18": round(avg_18, 4),
+            "best_acertos_topk_15": stats["topk_best_15"],
+            "best_acertos_topk_18": stats["topk_best_18"],
+        }
+
     return {
         "timestamp": now_str(),
         "janela": janela,
@@ -178,6 +242,7 @@ def avaliar(
         "simular_aprendizado": simular_aprendizado,
         "resumo": resumo,
         "brains_top1": dict(sorted(brains_rank.items(), key=lambda x: x[1], reverse=True)),
+        "brains": dict(sorted(brains_output.items(), key=lambda x: x[1]["top1_15"] + x[1]["top1_18"], reverse=True)),
     }
 
 

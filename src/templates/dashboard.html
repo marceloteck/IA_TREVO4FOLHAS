@@ -194,6 +194,41 @@
 
       <section class="grid">
         <div class="card">
+          <h3>Top cérebros (15 dezenas)</h3>
+          {% if relatorio_15 and relatorio_15.brains %}
+          <ul class="list">
+            {% for brain_id, info in relatorio_15.brains.items() %}
+            {% if loop.index <= 8 %}
+            <li>
+              <strong>{{ brain_id }}</strong> — Top1: {{ info.top1_15 }} | Gerados: {{ info.generated_15 }} | Média acertos (topK): {{ info.avg_acertos_topk_15 }}
+            </li>
+            {% endif %}
+            {% endfor %}
+          </ul>
+          {% else %}
+          <p class="muted">Sem dados de cérebros.</p>
+          {% endif %}
+        </div>
+        <div class="card">
+          <h3>Top cérebros (18 dezenas)</h3>
+          {% if relatorio_18 and relatorio_18.brains %}
+          <ul class="list">
+            {% for brain_id, info in relatorio_18.brains.items() %}
+            {% if loop.index <= 8 %}
+            <li>
+              <strong>{{ brain_id }}</strong> — Top1: {{ info.top1_18 }} | Gerados: {{ info.generated_18 }} | Média acertos (topK): {{ info.avg_acertos_topk_18 }}
+            </li>
+            {% endif %}
+            {% endfor %}
+          </ul>
+          {% else %}
+          <p class="muted">Sem dados de cérebros.</p>
+          {% endif %}
+        </div>
+      </section>
+
+      <section class="grid">
+        <div class="card">
           <h3>Executar avaliação (14/15 foco)</h3>
           <form method="post" action="{{ url_for('avaliar') }}">
             <div class="row">
