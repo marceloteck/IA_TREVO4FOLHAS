@@ -58,6 +58,7 @@ jobs:
       - name: Gerar relatorio de avaliacao
         shell: bash
         run: |
+          export PYTHONPATH="${PYTHONPATH:-.}"
           JANELA="${{ github.event.inputs.janela || '300' }}"
           CANDIDATOS="${{ github.event.inputs.candidatos || '80' }}"
           TOP_N="${{ github.event.inputs.top_n || '60' }}"
