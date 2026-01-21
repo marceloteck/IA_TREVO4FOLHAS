@@ -26,6 +26,7 @@ from training.brains.exploratory.total_dezenas_auto_brain import ExplorTotalDeze
 from training.brains.statistical.elite_memory_brain import StatEliteMemoryBrain
 from training.brains.statistical.paridade_faixas_brain import StatParidadeFaixasBrain
 from training.brains.structural.pattern_shape_brain import StructuralPatternShapeBrain
+from training.brains.heuristic.heuristic_brains import build_heuristic_brains
 
 
 # ==========================
@@ -372,6 +373,8 @@ def treinar_pendencias(conn, limite_concursos: Optional[int] = None) -> Dict[str
     hub.register(_instantiate_brain(StatEliteMemoryBrain, conn))
     hub.register(_instantiate_brain(StatParidadeFaixasBrain, conn))
     hub.register(_instantiate_brain(StructuralPatternShapeBrain, conn))
+    for brain in build_heuristic_brains(conn):
+        hub.register(brain)
 
     hub.load_all()  # carrega estado persistido dos cérebros
 
