@@ -1,6 +1,8 @@
 # START/startBD.py
 from __future__ import annotations
 
+import os
+
 import sys
 from pathlib import Path
 from datetime import datetime
@@ -115,6 +117,10 @@ def importar_csv_sem_duplicar(conn, csv_path: Path):
 # ======================================================
 def main():
     try:
+        db_override = os.getenv("DB_PATH")
+        conn = get_conn(db_override) if db_override else get_conn()
+        criar_schema(conn)
+        
         conn = get_conn()
 
         criar_schema(conn)

@@ -1,0 +1,122 @@
+name: Treinamento Backtest 5h (Manual - DB TEMP)
+
+on:
+  workflow_dispatch:
+    inputs:
+      hours:
+        description: "Duração em horas (ex: 5.0)"
+        required: true
+        default: "5.0"
+      block_size:
+        description: "Block size (ex: 250)"
+        required: true
+        default: "250"
+      aggressive:
+        description: "Exploração agressiva?"
+        required: true
+        default: "true"
+        type: boolean
+      min_mem:
+        description: "Salvar memoria_jogos a partir de (recomendado 14)"
+        required: true
+        default: "14"
+      avaliar_top_k:
+        description: "Quantos candidatos avaliar por tamanho (ex: 40)"
+        required: true
+        default: "40"
+      save_every:
+        description: "Salvar estado dos cérebros a cada N concursos (ex: 10)"
+        required: true
+        default: "10"
+      seed:
+        description: "Seed opcional (vazio = aleatório)"
+        required: false
+        default: ""
+
+concurrency:
+  group: treino-backtest-5h
+  cancel-in-progress: false
+
+jobs:
+  train:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360  # margem (6h) pra não cortar cedo
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Prepare TEMP DB path (NEW DB per run)
+        run: |
+          TS=$(date +"%Y%m%d_%H%M%S")
+          RUN_DIR="data/BD/temp/run_${TS}"
+          mkdir -p "${RUN_DIR}"
+          echo "DB_PATH=${RUN_DIR}/lotofacil_${TS}.db" >> $GITHUB_ENV
+          echo "RUN_DIR=${RUN_DIR}" >> $GITHUB_ENV
+          echo "TS=${TS}" >> $GITHUB_ENV
+
+      - name: Build DB from CSV into TEMP DB (startBD)
+        run: |
+          python START/startBD.py
+
+      - name: Run Backtest Engine (N->N+1) for X hours
+        env:
+          HOURS: ${{ inputs.hours }}
+          BLOCK: ${{ inputs.block_size }}
+          MIN_MEM: ${{ inputs.min_mem }}
+          TOPK: ${{ inputs.avaliar_top_k }}
+          SAVE_EVERY: ${{ inputs.save_every }}
+          SEED: ${{ inputs.seed }}
+        run: |
+          CMD="python -m training.backtest.backtest_engine --hours ${HOURS} --block-size ${BLOCK} --min-mem ${MIN_MEM} --avaliar-top-k ${TOPK} --save-every ${SAVE_EVERY}"
+          if [ "${{ inputs.aggressive }}" = "true" ]; then
+            CMD="${CMD} --aggressive"
+          fi
+          if [ -n "${SEED}" ]; then
+            CMD="${CMD} --seed ${SEED}"
+          fi
+          echo "Running: ${CMD}"
+          ${CMD}
+
+      - name: Quick DB stats (optional)
+        run: |
+          python - << 'PY'
+          import os, sqlite3
+          db = os.getenv("DB_PATH")
+          print("DB_PATH:", db)
+          con = sqlite3.connect(db)
+          cur = con.cursor()
+          for q, label in [
+            ("SELECT COUNT(*) FROM memoria_jogos WHERE acertos>=14", "memoria 14+"),
+            ("SELECT COUNT(*) FROM memoria_jogos WHERE acertos=15", "memoria 15"),
+            ("SELECT COUNT(*) FROM tentativas", "tentativas"),
+          ]:
+            try:
+              cur.execute(q)
+              print(label, "=", cur.fetchone()[0])
+            except Exception as e:
+              print(label, "erro:", e)
+          con.close()
+          PY
+
+      - name: Upload TEMP DB + reports as artifact (NO PUSH DB)
+        uses: actions/upload-artifact@v4
+        with:
+          name: treino_backtest_${{ env.TS }}_${{ github.run_id }}
+          path: |
+            ${{ env.DB_PATH }}
+            reports/**
+            scripts/ci_good_marker.json
+          if-no-files-found: warn

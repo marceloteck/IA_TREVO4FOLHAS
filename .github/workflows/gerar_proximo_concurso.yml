@@ -1,92 +1,90 @@
-name: 🎯 Gerar Próximo Concurso (IA TREVO)
+name: Gerar Próximo Concurso (Manual)
 
 on:
   workflow_dispatch:
     inputs:
-      PERFIL:
-        description: "Perfil de risco"
+      perfil:
+        description: "Perfil (conservador|balanceado|agressivo)"
         required: true
         default: "balanceado"
         type: choice
-        options:
-          - conservador
-          - balanceado
-          - agressivo
-
-      JANELA:
-        description: "Janela de histórico"
+        options: [conservador, balanceado, agressivo]
+      janela:
+        description: "Janela (ex 300)"
         required: true
         default: "300"
-
-      PER_BRAIN:
-        description: "Candidatos por cérebro"
+      per_brain:
+        description: "Candidatos por cérebro (ex 120)"
         required: true
         default: "120"
-
-      TOP_N:
-        description: "Top N pós-hub"
+      top_n:
+        description: "Top N pós-hub (ex 250)"
         required: true
         default: "250"
-
-      MAX_SIM:
-        description: "Similaridade máxima (Jaccard)"
+      max_sim:
+        description: "Max similaridade Jaccard (ex 0.78)"
         required: true
         default: "0.78"
+      salvar_db:
+        description: "Salvar em tabela predicoes_proximo?"
+        required: true
+        default: "true"
+        type: boolean
+
+concurrency:
+  group: gerar-proximo-manual
+  cancel-in-progress: false
 
 jobs:
-  gerar:
+  run:
     runs-on: ubuntu-latest
-
-    permissions:
-      contents: write   # necessário se --salvar-db gerar commit depois
-
     steps:
-      - name: 📥 Checkout do repositório
+      - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - name: 🐍 Setup Python
+      - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      - name: 📦 Instalar dependências
+      - name: Install deps
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: 🧱 Garantir banco inicializado
+      - name: Prepare TEMP DB path
+        run: |
+          TS=$(date +"%Y%m%d_%H%M%S")
+          RUN_DIR="data/BD/temp/run_${TS}"
+          mkdir -p "${RUN_DIR}"
+          echo "DB_PATH=${RUN_DIR}/lotofacil_${TS}.db" >> $GITHUB_ENV
+          echo "RUN_DIR=${RUN_DIR}" >> $GITHUB_ENV
+
+      - name: Build DB from CSV into TEMP DB
         run: |
           python START/startBD.py
 
-      - name: 🎯 Gerar números do próximo concurso
+      - name: Generate next contest (15 e 18) + salvar_db
         env:
-          PERFIL: ${{ inputs.PERFIL }}
-          JANELA: ${{ inputs.JANELA }}
-          PER_BRAIN: ${{ inputs.PER_BRAIN }}
-          TOP_N: ${{ inputs.TOP_N }}
-          MAX_SIM: ${{ inputs.MAX_SIM }}
+          PERFIL: ${{ inputs.perfil }}
+          JANELA: ${{ inputs.janela }}
+          PER_BRAIN: ${{ inputs.per_brain }}
+          TOP_N: ${{ inputs.top_n }}
+          MAX_SIM: ${{ inputs.max_sim }}
         run: |
-          echo "========================================="
-          echo "  GERAR PROXIMO CONCURSO - IA TREVO"
-          echo "========================================="
-          echo "Perfil   : ${PERFIL}"
-          echo "Janela   : ${JANELA}"
-          echo "per_brain: ${PER_BRAIN}"
-          echo "top_n    : ${TOP_N}"
-          echo "max_sim  : ${MAX_SIM}"
-          echo ""
-          
-          python START/gerar_proximo_concurso.py \
-            --both \
-            --perfil "${PERFIL}" \
-            --janela "${JANELA}" \
-            --per-brain "${PER_BRAIN}" \
-            --top-n "${TOP_N}" \
-            --max-sim "${MAX_SIM}" \
-            --salvar-db
+          CMD="python START/gerar_proximo_concurso.py --both --perfil ${PERFIL} --janela ${JANELA} --per-brain ${PER_BRAIN} --top-n ${TOP_N} --max-sim ${MAX_SIM}"
+          if [ "${{ inputs.salvar_db }}" = "true" ]; then
+            CMD="${CMD} --salvar-db"
+          fi
+          echo "Running: ${CMD}"
+          ${CMD}
 
-      - name: 📄 Upload dos relatórios gerados
+      - name: Upload reports and TEMP DB as artifact
         uses: actions/upload-artifact@v4
         with:
-          name: relatorios-proximo-concurso
-          path: reports/
+          name: proximo_concurso_${{ inputs.perfil }}_${{ github.run_id }}
+          path: |
+            reports/**
+            ${{ env.DB_PATH }}
