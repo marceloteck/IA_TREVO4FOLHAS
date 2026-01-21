@@ -8,6 +8,11 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+import sys
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 from data.BD.connection import get_conn
 from training.core.brain_hub import BrainHub
@@ -147,11 +152,15 @@ def avaliar(
 
     resumo = {}
     for tamanho, data in resultados.items():
+        quase_acertos = sum(v for k, v in data.contagens.items() if 11 <= k <= 13)
+        foco_14_15 = sum(v for k, v in data.contagens.items() if k >= 14)
         resumo[tamanho] = {
             "total": data.total,
             "media_acertos": round(data.media(), 4),
             "melhor": data.melhor,
             "contagens": dict(data.contagens),
+            "quase_acertos_11_13": quase_acertos,
+            "foco_14_15": foco_14_15,
             "q11+": sum(v for k, v in data.contagens.items() if k >= 11),
             "q12+": sum(v for k, v in data.contagens.items() if k >= 12),
             "q13+": sum(v for k, v in data.contagens.items() if k >= 13),
