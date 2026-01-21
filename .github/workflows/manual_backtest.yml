@@ -24,8 +24,8 @@ on:
         required: true
         default: "10"
   # Adicionado Cron para rodar a cada 20 minutos
-  schedule:
-    - cron: "*/20 * * * *"
+  #schedule:
+   # - cron: "*/20 * * * *"
 
 permissions:
   contents: write
