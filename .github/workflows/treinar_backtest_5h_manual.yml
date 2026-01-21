@@ -72,11 +72,14 @@ jobs:
           echo "TS=${TS}" >> $GITHUB_ENV
 
       - name: Build DB from CSV into TEMP DB (startBD)
+        env:
+          DB_PATH: ${{ env.DB_PATH }}
         run: |
           python START/startBD.py
 
       - name: Run Backtest Engine (N->N+1) for X hours
         env:
+          DB_PATH: ${{ env.DB_PATH }}
           HOURS: ${{ inputs.hours }}
           BLOCK: ${{ inputs.block_size }}
           MIN_MEM: ${{ inputs.min_mem }}
@@ -95,6 +98,8 @@ jobs:
           ${CMD}
 
       - name: Quick DB stats (optional)
+        env:
+          DB_PATH: ${{ env.DB_PATH }}
         run: |
           python - << 'PY'
           import os, sqlite3
@@ -115,7 +120,7 @@ jobs:
           con.close()
           PY
 
-      - name: Upload TEMP DB + reports as artifact (NO PUSH DB)
+      - name: Upload TEMP DB + reports as artifact (SEM PUSH DO DB)
         uses: actions/upload-artifact@v4
         with:
           name: treino_backtest_${{ env.TS }}_${{ github.run_id }}
@@ -125,31 +130,27 @@ jobs:
             scripts/ci_good_marker.json
           if-no-files-found: warn
 
-      - name: Commit & Push (final do treinamento) — INCLUI data/BD/temp
+      - name: Commit & Push (somente reports/marker, sem DB)
         if: success()
         env:
           BRANCH_NAME: ${{ github.ref_name }}
         run: |
           set -euo pipefail
 
-          echo "Configurando git..."
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
           git checkout "${BRANCH_NAME}"
           git pull --rebase origin "${BRANCH_NAME}" || true
 
-          # (Opcional) não versionar arquivos temporários do SQLite se existirem
-          # Eles NÃO são o DB principal, só arquivos de runtime.
-          git add -A
-          git reset -- 'data/BD/temp/**/*.db-wal' 'data/BD/temp/**/*.db-shm' 'data/BD/temp/**/*.db-journal' 2>/dev/null || true
-          git restore --staged 'data/BD/temp/**/*.db-wal' 'data/BD/temp/**/*.db-shm' 'data/BD/temp/**/*.db-journal' 2>/dev/null || true
+          # adiciona somente o que é pequeno
+          git add reports/** scripts/ci_good_marker.json || true
 
           if git diff --cached --quiet; then
             echo "Nada para commitar."
             exit 0
           fi
 
-          MSG="🧠 Treinamento finalizado | TS=${TS} | run_id=${GITHUB_RUN_ID}"
+          MSG="🧠 Treino finalizado (sem DB) | TS=${TS} | run_id=${GITHUB_RUN_ID}"
           git commit -m "${MSG}"
           git push origin "${BRANCH_NAME}"
