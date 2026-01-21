@@ -152,11 +152,15 @@ def avaliar(
 
     resumo = {}
     for tamanho, data in resultados.items():
+        quase_acertos = sum(v for k, v in data.contagens.items() if 11 <= k <= 13)
+        foco_14_15 = sum(v for k, v in data.contagens.items() if k >= 14)
         resumo[tamanho] = {
             "total": data.total,
             "media_acertos": round(data.media(), 4),
             "melhor": data.melhor,
             "contagens": dict(data.contagens),
+            "quase_acertos_11_13": quase_acertos,
+            "foco_14_15": foco_14_15,
             "q11+": sum(v for k, v in data.contagens.items() if k >= 11),
             "q12+": sum(v for k, v in data.contagens.items() if k >= 12),
             "q13+": sum(v for k, v in data.contagens.items() if k >= 13),
