@@ -7,6 +7,15 @@ from training.brains._utils import UNIVERSO, max_consecutive_run, weighted_sampl
 from training.core.base_brain import BaseBrain
 
 PRIMES = {2, 3, 5, 7, 11, 13, 17, 19, 23}
+FIBONACCI = {1, 2, 3, 5, 8, 13, 21}
+MULTIPLOS_3 = {3, 6, 9, 12, 15, 18, 21, 24}
+MOLDURA = {
+    1, 2, 3, 4, 5,
+    6, 10,
+    11, 15,
+    16, 20,
+    21, 22, 23, 24, 25,
+}
 
 
 @dataclass(frozen=True)
@@ -57,7 +66,7 @@ class HeuristicPatternBrain(BaseBrain):
         while len(jogos) < n and attempts < max_attempts:
             jogo = self._sample_game(size=size, context=context)
             attempts += 1
-            if self._passes_constraints(jogo, size):
+            if self._passes_constraints(jogo, size, context):
                 jogos.append(sorted(jogo))
 
         while len(jogos) < n:
@@ -72,6 +81,12 @@ class HeuristicPatternBrain(BaseBrain):
         constraints = self.config.constraints
         size = len(jogo)
         scores = []
+
+        odd_target = self._scaled_value(constraints.get("odd_target"), size)
+        odd_tol = constraints.get("odd_tol", 1)
+        if odd_target is not None:
+            odd_count = sum(1 for x in jogo if x % 2 != 0)
+            scores.append(self._target_score(odd_count, odd_target, odd_tol))
 
         even_target = self._scaled_value(constraints.get("even_target"), size)
         even_tol = constraints.get("even_tol", 1)
@@ -90,6 +105,31 @@ class HeuristicPatternBrain(BaseBrain):
         if prime_target is not None:
             prime_count = sum(1 for x in jogo if x in PRIMES)
             scores.append(self._target_score(prime_count, prime_target, prime_tol))
+
+        mult3_target = self._scaled_value(constraints.get("mult3_target"), size)
+        mult3_tol = constraints.get("mult3_tol", 1)
+        if mult3_target is not None:
+            mult3_count = sum(1 for x in jogo if x in MULTIPLOS_3)
+            scores.append(self._target_score(mult3_count, mult3_target, mult3_tol))
+
+        fib_target = self._scaled_value(constraints.get("fib_target"), size)
+        fib_tol = constraints.get("fib_tol", 1)
+        if fib_target is not None:
+            fib_count = sum(1 for x in jogo if x in FIBONACCI)
+            scores.append(self._target_score(fib_count, fib_target, fib_tol))
+
+        moldura_target = self._scaled_value(constraints.get("moldura_target"), size)
+        moldura_tol = constraints.get("moldura_tol", 1)
+        if moldura_target is not None:
+            moldura_count = sum(1 for x in jogo if x in MOLDURA)
+            scores.append(self._target_score(moldura_count, moldura_target, moldura_tol))
+
+        repeat_target = self._scaled_value(constraints.get("repeat_target"), size)
+        repeat_tol = constraints.get("repeat_tol", 1)
+        if repeat_target is not None:
+            ultimo = context.get("ultimo_resultado") or []
+            repeat_count = len(set(jogo) & set(ultimo))
+            scores.append(self._target_score(repeat_count, repeat_target, repeat_tol))
 
         max_run = constraints.get("max_run")
         if max_run is not None:
@@ -135,14 +175,33 @@ class HeuristicPatternBrain(BaseBrain):
 
     def _sample_game(self, size: int, context: Dict[str, Any]) -> List[int]:
         freq = context.get("freq_recente") or {}
+        constraints = self.config.constraints
+        fixed_numbers = [int(x) for x in constraints.get("fixed_numbers", []) if 1 <= int(x) <= 25]
+        excluded_numbers = {int(x) for x in constraints.get("excluded_numbers", []) if 1 <= int(x) <= 25}
         weights = {}
         for d in UNIVERSO:
+            if d in excluded_numbers:
+                continue
             base = float(freq.get(d, 0)) + 1.0
             weights[d] = base ** (0.75 + 0.5 * self.config.recent_bias)
-        return weighted_sample_without_replacement(weights, size)
+        jogo = set(fixed_numbers[: size])
+        faltam = size - len(jogo)
+        if faltam > 0:
+            w_pool = {d: w for d, w in weights.items() if d not in jogo}
+            if not w_pool:
+                w_pool = {d: 1.0 for d in UNIVERSO if d not in jogo}
+            jogo.update(weighted_sample_without_replacement(w_pool, faltam))
+        return sorted(jogo)
 
-    def _passes_constraints(self, jogo: List[int], size: int) -> bool:
+    def _passes_constraints(self, jogo: List[int], size: int, context: Dict[str, Any]) -> bool:
         constraints = self.config.constraints
+
+        odd_target = self._scaled_value(constraints.get("odd_target"), size)
+        odd_tol = constraints.get("odd_tol", 1)
+        if odd_target is not None:
+            odd_count = sum(1 for x in jogo if x % 2 != 0)
+            if abs(odd_count - odd_target) > odd_tol:
+                return False
 
         even_target = self._scaled_value(constraints.get("even_target"), size)
         even_tol = constraints.get("even_tol", 1)
@@ -163,6 +222,35 @@ class HeuristicPatternBrain(BaseBrain):
         if prime_target is not None:
             prime_count = sum(1 for x in jogo if x in PRIMES)
             if abs(prime_count - prime_target) > prime_tol:
+                return False
+
+        mult3_target = self._scaled_value(constraints.get("mult3_target"), size)
+        mult3_tol = constraints.get("mult3_tol", 1)
+        if mult3_target is not None:
+            mult3_count = sum(1 for x in jogo if x in MULTIPLOS_3)
+            if abs(mult3_count - mult3_target) > mult3_tol:
+                return False
+
+        fib_target = self._scaled_value(constraints.get("fib_target"), size)
+        fib_tol = constraints.get("fib_tol", 1)
+        if fib_target is not None:
+            fib_count = sum(1 for x in jogo if x in FIBONACCI)
+            if abs(fib_count - fib_target) > fib_tol:
+                return False
+
+        moldura_target = self._scaled_value(constraints.get("moldura_target"), size)
+        moldura_tol = constraints.get("moldura_tol", 1)
+        if moldura_target is not None:
+            moldura_count = sum(1 for x in jogo if x in MOLDURA)
+            if abs(moldura_count - moldura_target) > moldura_tol:
+                return False
+
+        repeat_target = self._scaled_value(constraints.get("repeat_target"), size)
+        repeat_tol = constraints.get("repeat_tol", 1)
+        if repeat_target is not None:
+            ultimo = context.get("ultimo_resultado") or []
+            repeat_count = len(set(jogo) & set(ultimo))
+            if abs(repeat_count - repeat_target) > repeat_tol:
                 return False
 
         max_run = constraints.get("max_run")
@@ -264,6 +352,76 @@ def build_heuristic_brains(db_conn) -> List[HeuristicPatternBrain]:
             category="heuristico",
             version="v1",
             constraints={"even_target": 9, "even_tol": 1},
+        ),
+        HeuristicConfig(
+            brain_id="heur_odd_7",
+            name="Heurística Ímpares 7",
+            category="heuristico",
+            version="v1",
+            constraints={"odd_target": 7, "odd_tol": 1},
+        ),
+        HeuristicConfig(
+            brain_id="heur_odd_8",
+            name="Heurística Ímpares 8",
+            category="heuristico",
+            version="v1",
+            constraints={"odd_target": 8, "odd_tol": 1},
+        ),
+        HeuristicConfig(
+            brain_id="heur_repeat_9",
+            name="Heurística Repetidas 9",
+            category="heuristico",
+            version="v1",
+            constraints={"repeat_target": 9, "repeat_tol": 1},
+        ),
+        HeuristicConfig(
+            brain_id="heur_repeat_10",
+            name="Heurística Repetidas 10",
+            category="heuristico",
+            version="v1",
+            constraints={"repeat_target": 10, "repeat_tol": 1},
+        ),
+        HeuristicConfig(
+            brain_id="heur_moldura_10",
+            name="Heurística Moldura 10",
+            category="heuristico",
+            version="v1",
+            constraints={"moldura_target": 10, "moldura_tol": 1},
+        ),
+        HeuristicConfig(
+            brain_id="heur_moldura_11",
+            name="Heurística Moldura 11",
+            category="heuristico",
+            version="v1",
+            constraints={"moldura_target": 11, "moldura_tol": 1},
+        ),
+        HeuristicConfig(
+            brain_id="heur_mult3_4",
+            name="Heurística Múltiplos de 3 (4)",
+            category="heuristico",
+            version="v1",
+            constraints={"mult3_target": 4, "mult3_tol": 1},
+        ),
+        HeuristicConfig(
+            brain_id="heur_mult3_6",
+            name="Heurística Múltiplos de 3 (6)",
+            category="heuristico",
+            version="v1",
+            constraints={"mult3_target": 6, "mult3_tol": 1},
+        ),
+        HeuristicConfig(
+            brain_id="heur_fib_3",
+            name="Heurística Fibonacci 3",
+            category="heuristico",
+            version="v1",
+            constraints={"fib_target": 3, "fib_tol": 1},
+        ),
+        HeuristicConfig(
+            brain_id="heur_fib_5",
+            name="Heurística Fibonacci 5",
+            category="heuristico",
+            version="v1",
+            constraints={"fib_target": 5, "fib_tol": 1},
         ),
         HeuristicConfig(
             brain_id="heur_sum_170_210",
@@ -390,6 +548,27 @@ def build_heuristic_brains(db_conn) -> List[HeuristicPatternBrain]:
             category="heuristico",
             version="v1",
             constraints={"even_target": 7, "even_tol": 1, "low_target": 7, "low_tol": 1},
+        ),
+        HeuristicConfig(
+            brain_id="heur_odd7_repeat9",
+            name="Heurística Ímpares 7 + Repetidas 9",
+            category="heuristico",
+            version="v1",
+            constraints={"odd_target": 7, "odd_tol": 1, "repeat_target": 9, "repeat_tol": 1},
+        ),
+        HeuristicConfig(
+            brain_id="heur_moldura10_prime6",
+            name="Heurística Moldura 10 + Primos 6",
+            category="heuristico",
+            version="v1",
+            constraints={"moldura_target": 10, "moldura_tol": 1, "prime_target": 6, "prime_tol": 1},
+        ),
+        HeuristicConfig(
+            brain_id="heur_mult3_4_fib3",
+            name="Heurística Multiplos 3 (4) + Fibonacci 3",
+            category="heuristico",
+            version="v1",
+            constraints={"mult3_target": 4, "mult3_tol": 1, "fib_target": 3, "fib_tol": 1},
         ),
         HeuristicConfig(
             brain_id="heur_even8_prime6",
