@@ -1,0 +1,17 @@
+{
+  "cycles": 3,
+  "train_limit": 200,
+  "exploration_rate": 0.12,
+  "max_brain_share": 0.4,
+  "exploration_step": 0.02,
+  "exploration_min": 0.04,
+  "exploration_max": 0.2,
+  "eval_params": {
+    "janela": 300,
+    "candidatos": 120,
+    "top_n": 60,
+    "avaliar_top_k": 60,
+    "max_concursos": 200,
+    "simular_aprendizado": true
+  }
+}
