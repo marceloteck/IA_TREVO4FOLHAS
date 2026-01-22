@@ -262,14 +262,16 @@ def insert_pred(
 def register_brains_auto(conn, hub: BrainHub) -> List[str]:
     loaded: List[str] = []
 
+    def _register(brain) -> None:
+        hub.register(brain)
+        loaded.append(getattr(brain, "id", brain.__class__.__name__))
+
     def _try_add(import_path: str, cls_name: str, *args, **kwargs):
-        nonlocal loaded
         try:
             mod = __import__(import_path, fromlist=[cls_name])
             cls = getattr(mod, cls_name)
             b = cls(conn, *args, **kwargs)
-            hub.register(b)
-            loaded.append(getattr(b, "id", f"{import_path}.{cls_name}"))
+            _register(b)
         except Exception:
             pass
 
@@ -284,6 +286,13 @@ def register_brains_auto(conn, hub: BrainHub) -> List[str]:
     _try_add("training.brains.statistical.elite_memory_brain", "StatEliteMemoryBrain")
     _try_add("training.brains.statistical.paridade_faixas_brain", "StatParidadeFaixasBrain")
     _try_add("training.brains.structural.pattern_shape_brain", "StructuralPatternShapeBrain")
+    try:
+        from training.brains.heuristic.heuristic_brains import build_heuristic_brains
+
+        for brain in build_heuristic_brains(conn):
+            _register(brain)
+    except Exception:
+        pass
 
     return loaded
 
@@ -364,12 +373,15 @@ def generate_for_size(
     conn: sqlite3.Connection,
     size: int,
     qtd: int,
+    qtd_strong: int,
     janela: int,
     per_brain: int,
     top_n: int,
     max_sim: float,
     perfil: str,
     salvar_db: bool,
+    exploration_rate: float,
+    max_brain_share: float,
 ) -> Path:
     ultimo_concurso = fetch_max_concurso(conn)
     proximo_concurso = ultimo_concurso + 1
@@ -378,7 +390,7 @@ def generate_for_size(
     freq = context.get("freq_recente", {}) or {}
     memoria_1415 = fetch_memoria_top(conn, min_pontos=14, limit=500)
 
-    hub = BrainHub(conn)
+    hub = BrainHub(conn, exploration_rate=exploration_rate, max_brain_share=max_brain_share)
     loaded = register_brains_auto(conn, hub)
     if not loaded:
         raise RuntimeError("Nenhum cérebro foi carregado. Verifique seus arquivos em training/brains.")
@@ -418,6 +430,7 @@ def generate_for_size(
 
     ranked.sort(key=lambda x: x["score_final"], reverse=True)
     final = diversify_ranked(ranked, top_k=qtd, max_sim=max_sim)
+    strongest = ranked[: max(0, int(qtd_strong))]
 
     reports_dir = ROOT / "reports"
     reports_dir.mkdir(parents=True, exist_ok=True)
@@ -438,6 +451,8 @@ def generate_for_size(
     lines.append(f"Candidatos por cérebro: {per_brain}")
     lines.append(f"Top_n pós-hub: {top_n}")
     lines.append(f"Diversidade max_sim (Jaccard): {max_sim}")
+    if strongest:
+        lines.append(f"Jogos fortes extras: {len(strongest)}")
     lines.append("=========================================\n")
 
     print(f"\n✅ Jogos finais (priorizados) — size={size} | perfil={perfil}\n")
@@ -452,6 +467,21 @@ def generate_for_size(
             f"fonte={item['brain_id']}"
         )
         lines.append("")
+
+    if strongest:
+        lines.append("=========================================")
+        lines.append("🔥 JOGOS FORTES (TOP SCORE HUB)")
+        lines.append("=========================================\n")
+        for i, item in enumerate(strongest, 1):
+            jogo = item["jogo"]
+            print(f"FORTE {i:02d}: {jogo} | score={item['score_final']:.4f} | fonte={item['brain_id']}")
+            lines.append(f"FORTE {i:02d}: {jogo}")
+            lines.append(
+                f"  score_final={item['score_final']:.6f} | hub={item['score_hub']:.6f} | "
+                f"freq={item['score_freq']:.6f} | mem={item['score_mem']:.6f} | shape={item['score_shape']:.6f} | "
+                f"fonte={item['brain_id']}"
+            )
+            lines.append("")
 
     lines.append("Observação importante:")
     lines.append("- Loteria é aleatória. Este ranking só prioriza candidatos segundo o aprendizado do sistema.")
@@ -495,17 +525,19 @@ def generate_for_size(
 # ==========================
 def main() -> None:
     parser = argparse.ArgumentParser(description="Gerar jogos para o próximo concurso usando BrainHub + memória + contexto.")
-    parser.add_argument("--size", type=int, default=15, help="Tamanho do jogo (15 ou 18).")
-    parser.add_argument("--qtd", type=int, default=10, help="Quantidade de jogos finais.")
+    parser.add_argument("--size", type=int, default=15, help="Tamanho do jogo principal (15, 16, 18 ou 19).")
+    parser.add_argument("--qtd", type=int, default=10, help="Quantidade de jogos finais do tamanho principal.")
+    parser.add_argument("--qtd-strong", type=int, default=1, help="Quantidade de jogos fortes extras (top score).")
+    parser.add_argument("--second-size", type=int, default=None, help="Segundo tamanho opcional (15, 16, 18 ou 19).")
+    parser.add_argument("--second-qtd", type=int, default=None, help="Quantidade de jogos do segundo tamanho.")
     parser.add_argument("--janela", type=int, default=300, help="Janela de histórico para contexto.")
     parser.add_argument("--per-brain", type=int, default=120, help="Candidatos por cérebro.")
     parser.add_argument("--top-n", type=int, default=250, help="Top candidatos após BrainHub (antes do re-ranking).")
     parser.add_argument("--max-sim", type=float, default=0.78, help="Diversidade (Jaccard máximo entre jogos finais).")
+    parser.add_argument("--exploration-rate", type=float, default=0.10, help="Taxa de exploração do BrainHub.")
+    parser.add_argument("--max-brain-share", type=float, default=0.4, help="Limite de participação por cérebro no Top N.")
     parser.add_argument("--perfil", type=str, default="balanceado", choices=["conservador", "balanceado", "agressivo"])
     parser.add_argument("--salvar-db", action="store_true", help="Salvar jogos gerados na tabela predicoes_proximo.")
-    parser.add_argument("--both", action="store_true", help="Gerar 15 e 18 no mesmo comando (usa --qtd15 e --qtd18).")
-    parser.add_argument("--qtd15", type=int, default=10, help="Qtd jogos para size=15 (quando --both).")
-    parser.add_argument("--qtd18", type=int, default=7, help="Qtd jogos para size=18 (quando --both).")
     parser.add_argument("--seed", type=int, default=None, help="Seed para reprodutibilidade (opcional).")
     args = parser.parse_args()
 
@@ -537,44 +569,42 @@ def main() -> None:
         log(f"📌 Próximo concurso      : {ultimo_concurso + 1}")
         log("=========================================")
 
-        if args.both:
-            generate_for_size(
-                conn=conn,
-                size=15,
-                qtd=max(1, int(args.qtd15)),
-                janela=max(50, int(args.janela)),
-                per_brain=max(10, int(args.per_brain)),
-                top_n=max(50, int(args.top_n)),
-                max_sim=float(args.max_sim),
-                perfil=str(args.perfil),
-                salvar_db=bool(args.salvar_db),
-            )
-            generate_for_size(
-                conn=conn,
-                size=18,
-                qtd=max(1, int(args.qtd18)),
-                janela=max(50, int(args.janela)),
-                per_brain=max(10, int(args.per_brain)),
-                top_n=max(50, int(args.top_n)),
-                max_sim=float(args.max_sim),
-                perfil=str(args.perfil),
-                salvar_db=bool(args.salvar_db),
-            )
-        else:
-            size = int(args.size)
-            if size not in (15, 18):
-                size = 15
+        size = int(args.size)
+        if size not in (15, 16, 18, 19):
+            size = 15
 
+        generate_for_size(
+            conn=conn,
+            size=size,
+            qtd=max(1, int(args.qtd)),
+            qtd_strong=max(0, int(args.qtd_strong)),
+            janela=max(50, int(args.janela)),
+            per_brain=max(10, int(args.per_brain)),
+            top_n=max(50, int(args.top_n)),
+            max_sim=float(args.max_sim),
+            perfil=str(args.perfil),
+            salvar_db=bool(args.salvar_db),
+            exploration_rate=float(args.exploration_rate),
+            max_brain_share=float(args.max_brain_share),
+        )
+
+        if args.second_size is not None and args.second_qtd is not None:
+            second_size = int(args.second_size)
+            if second_size not in (15, 16, 18, 19):
+                second_size = 18
             generate_for_size(
                 conn=conn,
-                size=size,
-                qtd=max(1, int(args.qtd)),
+                size=second_size,
+                qtd=max(1, int(args.second_qtd)),
+                qtd_strong=0,
                 janela=max(50, int(args.janela)),
                 per_brain=max(10, int(args.per_brain)),
                 top_n=max(50, int(args.top_n)),
                 max_sim=float(args.max_sim),
                 perfil=str(args.perfil),
                 salvar_db=bool(args.salvar_db),
+                exploration_rate=float(args.exploration_rate),
+                max_brain_share=float(args.max_brain_share),
             )
 
     finally:
