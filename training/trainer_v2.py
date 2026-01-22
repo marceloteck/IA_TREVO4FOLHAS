@@ -28,6 +28,7 @@ from training.brains.statistical.paridade_faixas_brain import StatParidadeFaixas
 from training.brains.structural.pattern_shape_brain import StructuralPatternShapeBrain
 from training.brains.heuristic.heuristic_brains import build_heuristic_brains
 from training.brains.structural.core_protect_brain import StructuralCoreProtectBrain
+from training.brains.structural.anti_absence_brain import StructuralAntiAbsenceBrain
 
 
 # ==========================
@@ -375,6 +376,7 @@ def treinar_pendencias(conn, limite_concursos: Optional[int] = None) -> Dict[str
     hub.register(_instantiate_brain(StatParidadeFaixasBrain, conn))
     hub.register(_instantiate_brain(StructuralPatternShapeBrain, conn))
     hub.register(_instantiate_brain(StructuralCoreProtectBrain, conn))
+    hub.register(_instantiate_brain(StructuralAntiAbsenceBrain, conn))
     for brain in build_heuristic_brains(conn):
         hub.register(brain)
 

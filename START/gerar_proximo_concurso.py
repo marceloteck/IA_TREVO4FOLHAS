@@ -284,6 +284,7 @@ def register_brains_auto(conn, hub: BrainHub) -> List[str]:
     _try_add("training.brains.statistical.paridade_faixas_brain", "StatParidadeFaixasBrain")
     _try_add("training.brains.structural.pattern_shape_brain", "StructuralPatternShapeBrain")
     _try_add("training.brains.structural.core_protect_brain", "StructuralCoreProtectBrain")
+    _try_add("training.brains.structural.anti_absence_brain", "StructuralAntiAbsenceBrain")
 
     try:
         from training.brains.heuristic.heuristic_brains import build_heuristic_brains
@@ -349,16 +350,83 @@ def diversify_ranked(items: List[Dict[str, Any]], top_k: int, max_sim: float) ->
     return chosen
 
 
-def get_profile_weights(perfil: str) -> Tuple[float, float, float, float]:
+def get_profile_weights(perfil: str) -> Tuple[float, float, float, float, float]:
     """
-    Retorna pesos: (hub, freq, mem, shape)
+    Retorna pesos: (hub, freq, mem, shape, ran)
     """
     perfil = (perfil or "balanceado").lower().strip()
     if perfil == "conservador":
-        return (0.50, 0.25, 0.10, 0.15)
+        return (0.45, 0.22, 0.10, 0.13, 0.10)
     if perfil == "agressivo":
-        return (0.55, 0.15, 0.25, 0.05)
-    return (0.55, 0.20, 0.15, 0.10)
+        return (0.50, 0.12, 0.25, 0.05, 0.08)
+    return (0.50, 0.18, 0.15, 0.10, 0.07)
+
+
+def build_core_c(context: Dict[str, Any], janela: int = 120) -> List[int]:
+    historico = context.get("historico_recente") or []
+    recent = historico[-int(janela) :] if historico else []
+    coocc: Dict[Tuple[int, int], int] = {}
+    for jogo in recent:
+        for i in range(len(jogo)):
+            for j in range(i + 1, len(jogo)):
+                key = tuple(sorted((jogo[i], jogo[j])))
+                coocc[key] = coocc.get(key, 0) + 1
+    score_map: Dict[int, int] = {}
+    for (a, b), score in coocc.items():
+        score_map[a] = score_map.get(a, 0) + score
+        score_map[b] = score_map.get(b, 0) + score
+    ranked = sorted(score_map.items(), key=lambda x: x[1], reverse=True)
+    return [d for d, _ in ranked[:5]]
+
+
+def ran_penalty(
+    jogo: List[int],
+    core_a: List[int],
+    core_b: List[int],
+    core_c: List[int],
+) -> float:
+    hit_a = len(set(jogo) & set(core_a))
+    hit_b = len(set(jogo) & set(core_b))
+    hit_c = len(set(jogo) & set(core_c))
+    penalty = 0.0
+    if hit_a < 4:
+        penalty += 0.45
+    if hit_b < 8:
+        penalty += 0.30
+    if hit_c < 3:
+        penalty += 0.15
+    return min(0.9, penalty)
+
+
+def compact_game(
+    jogo: List[int],
+    target_size: int,
+    core_a: List[int],
+    core_b: List[int],
+    core_c: List[int],
+    freq: Dict[int, int],
+    pair_scores: Dict[Tuple[int, int], int],
+) -> List[int]:
+    jogo_atual = sorted(set(jogo))
+    while len(jogo_atual) > target_size:
+        costs = []
+        for d in jogo_atual:
+            in_a = 1.0 if d in core_a else 0.0
+            in_b = 0.8 if d in core_b else 0.0
+            in_c = 0.6 if d in core_c else 0.0
+            centrality = float(freq.get(d, 0)) / max(1, max(freq.values()) if freq else 1)
+            pair_score = 0.0
+            for other in jogo_atual:
+                if other == d:
+                    continue
+                key = tuple(sorted((d, other)))
+                pair_score += pair_scores.get(key, 0)
+            cost = (2.0 * in_a) + (1.2 * in_b) + (1.0 * in_c) + (0.6 * centrality) + (0.4 * pair_score)
+            costs.append((cost, d))
+        costs.sort(key=lambda x: x[0])
+        _, remove_d = costs[0]
+        jogo_atual.remove(remove_d)
+    return sorted(jogo_atual)
 
 
 # ==========================
@@ -369,6 +437,7 @@ def generate_for_size(
     size: int,
     qtd: int,
     qtd_strong: int,
+    base_size: int,
     janela: int,
     per_brain: int,
     top_n: int,
@@ -377,6 +446,8 @@ def generate_for_size(
     salvar_db: bool,
     exploration_rate: float,
     max_brain_share: float,
+    ran_strict: bool,
+    ensemble_bonus: float,
 ) -> Path:
     ultimo_concurso = fetch_max_concurso(conn)
     proximo_concurso = ultimo_concurso + 1
@@ -384,6 +455,16 @@ def generate_for_size(
     context = build_context(conn, concurso_n=ultimo_concurso, janela_recente=janela)
     freq = context.get("freq_recente", {}) or {}
     memoria_1415 = fetch_memoria_top(conn, min_pontos=14, limit=500)
+    core_a = [6, 7, 12, 18, 23]
+    core_b = [1, 4, 5, 9, 13, 17, 20, 21, 22, 25]
+    core_c = build_core_c(context, janela=120)
+    pair_scores: Dict[Tuple[int, int], int] = {}
+    historico = context.get("historico_recente") or []
+    for jogo_hist in historico[-120:]:
+        for i in range(len(jogo_hist)):
+            for j in range(i + 1, len(jogo_hist)):
+                key = tuple(sorted((jogo_hist[i], jogo_hist[j])))
+                pair_scores[key] = pair_scores.get(key, 0) + 1
 
     hub = BrainHub(conn, exploration_rate=exploration_rate, max_brain_share=max_brain_share)
     loaded = register_brains_auto(conn, hub)
@@ -394,24 +475,47 @@ def generate_for_size(
 
     candidatos = hub.generate_games(
         context=context,
-        size=size,
+        size=base_size,
         per_brain=per_brain,
         top_n=top_n,
     )
     if not candidatos:
         raise RuntimeError("Hub não gerou candidatos.")
 
-    w_hub, w_freq, w_mem, w_shape = get_profile_weights(perfil)
+    w_hub, w_freq, w_mem, w_shape, w_ran = get_profile_weights(perfil)
+
+    jogo_counts: Dict[Tuple[int, ...], int] = {}
+    for c in candidatos:
+        jogo_raw = tuple(sorted(int(x) for x in c["jogo"]))
+        if base_size != size:
+            jogo_raw = tuple(compact_game(list(jogo_raw), size, core_a, core_b, core_c, freq, pair_scores))
+        jogo_counts[jogo_raw] = jogo_counts.get(jogo_raw, 0) + 1
 
     ranked: List[Dict[str, Any]] = []
     for c in candidatos:
         jogo = [int(x) for x in c["jogo"]]
+        if base_size != size:
+            jogo = compact_game(jogo, size, core_a, core_b, core_c, freq, pair_scores)
         s_hub = float(c.get("score", 0.0))
         s_freq = score_freq_recente(jogo, freq)
         s_mem = score_memoria(jogo, memoria_1415)
         s_shape = score_shape(jogo, size)
+        s_ran = ran_penalty(jogo, core_a, core_b, core_c)
+        if ran_strict and s_ran >= 0.6:
+            continue
+        jogo_key = tuple(sorted(jogo))
+        bonus = 0.0
+        if jogo_counts.get(jogo_key, 0) >= 2:
+            bonus = float(ensemble_bonus)
 
-        score_final = (w_hub * s_hub) + (w_freq * s_freq) + (w_mem * s_mem) + (w_shape * s_shape)
+        score_final = (
+            (w_hub * s_hub)
+            + (w_freq * s_freq)
+            + (w_mem * s_mem)
+            + (w_shape * s_shape)
+            - (w_ran * s_ran)
+            + bonus
+        )
 
         ranked.append({
             "jogo": sorted(jogo),
@@ -420,6 +524,8 @@ def generate_for_size(
             "score_freq": float(s_freq),
             "score_mem": float(s_mem),
             "score_shape": float(s_shape),
+            "score_ran": float(s_ran),
+            "score_ensemble": float(bonus),
             "brain_id": str(c.get("brain_id", "unknown")),
         })
 
@@ -439,6 +545,7 @@ def generate_for_size(
     lines.append(f"Último concurso conhecido: {ultimo_concurso}")
     lines.append(f"Próximo concurso: {proximo_concurso}")
     lines.append(f"Tamanho do jogo: {size}")
+    lines.append(f"Tamanho base (compactação): {base_size}")
     lines.append(f"Cérebros ativos: {len(loaded)}")
     lines.append(f"Perfil: {perfil}")
     lines.append(f"Pesos: hub={w_hub} freq={w_freq} mem={w_mem} shape={w_shape}")
@@ -459,6 +566,7 @@ def generate_for_size(
         lines.append(
             f"  score_final={item['score_final']:.6f} | hub={item['score_hub']:.6f} | "
             f"freq={item['score_freq']:.6f} | mem={item['score_mem']:.6f} | shape={item['score_shape']:.6f} | "
+            f"ran={item['score_ran']:.6f} | ensemble={item['score_ensemble']:.6f} | "
             f"fonte={item['brain_id']}"
         )
         lines.append("")
@@ -474,6 +582,7 @@ def generate_for_size(
             lines.append(
                 f"  score_final={item['score_final']:.6f} | hub={item['score_hub']:.6f} | "
                 f"freq={item['score_freq']:.6f} | mem={item['score_mem']:.6f} | shape={item['score_shape']:.6f} | "
+                f"ran={item['score_ran']:.6f} | ensemble={item['score_ensemble']:.6f} | "
                 f"fonte={item['brain_id']}"
             )
             lines.append("")
@@ -525,12 +634,15 @@ def main() -> None:
     parser.add_argument("--qtd-strong", type=int, default=1, help="Quantidade de jogos fortes extras (top score).")
     parser.add_argument("--second-size", type=int, default=None, help="Segundo tamanho opcional (15, 16, 18 ou 19).")
     parser.add_argument("--second-qtd", type=int, default=None, help="Quantidade de jogos do segundo tamanho.")
+    parser.add_argument("--base-size", type=int, default=None, help="Tamanho base para compactação (ex: 19).")
     parser.add_argument("--janela", type=int, default=300, help="Janela de histórico para contexto.")
     parser.add_argument("--per-brain", type=int, default=120, help="Candidatos por cérebro.")
     parser.add_argument("--top-n", type=int, default=250, help="Top candidatos após BrainHub (antes do re-ranking).")
     parser.add_argument("--max-sim", type=float, default=0.78, help="Diversidade (Jaccard máximo entre jogos finais).")
     parser.add_argument("--exploration-rate", type=float, default=0.10, help="Taxa de exploração do BrainHub.")
     parser.add_argument("--max-brain-share", type=float, default=0.4, help="Limite de participação por cérebro no Top N.")
+    parser.add_argument("--ran-strict", action="store_true", help="Descartar jogos com RAN alto (proteção de núcleo).")
+    parser.add_argument("--ensemble-bonus", type=float, default=0.02, help="Bônus quando o jogo aparece em 2+ cérebros.")
     parser.add_argument("--perfil", type=str, default="balanceado", choices=["conservador", "balanceado", "agressivo"])
     parser.add_argument("--salvar-db", action="store_true", help="Salvar jogos gerados na tabela predicoes_proximo.")
     parser.add_argument("--seed", type=int, default=None, help="Seed para reprodutibilidade (opcional).")
@@ -567,12 +679,16 @@ def main() -> None:
         size = int(args.size)
         if size not in (15, 16, 18, 19):
             size = 15
+        base_size = int(args.base_size) if args.base_size is not None else size
+        if base_size not in (15, 16, 18, 19):
+            base_size = size
 
         generate_for_size(
             conn=conn,
             size=size,
             qtd=max(1, int(args.qtd)),
             qtd_strong=max(0, int(args.qtd_strong)),
+            base_size=base_size,
             janela=max(50, int(args.janela)),
             per_brain=max(10, int(args.per_brain)),
             top_n=max(50, int(args.top_n)),
@@ -581,6 +697,8 @@ def main() -> None:
             salvar_db=bool(args.salvar_db),
             exploration_rate=float(args.exploration_rate),
             max_brain_share=float(args.max_brain_share),
+            ran_strict=bool(args.ran_strict),
+            ensemble_bonus=float(args.ensemble_bonus),
         )
 
         if args.second_size is not None and args.second_qtd is not None:
@@ -592,6 +710,7 @@ def main() -> None:
                 size=second_size,
                 qtd=max(1, int(args.second_qtd)),
                 qtd_strong=0,
+                base_size=base_size,
                 janela=max(50, int(args.janela)),
                 per_brain=max(10, int(args.per_brain)),
                 top_n=max(50, int(args.top_n)),
@@ -600,6 +719,8 @@ def main() -> None:
                 salvar_db=bool(args.salvar_db),
                 exploration_rate=float(args.exploration_rate),
                 max_brain_share=float(args.max_brain_share),
+                ran_strict=bool(args.ran_strict),
+                ensemble_bonus=float(args.ensemble_bonus),
             )
 
     finally:
