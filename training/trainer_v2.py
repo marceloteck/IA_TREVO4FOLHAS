@@ -26,6 +26,9 @@ from training.brains.exploratory.total_dezenas_auto_brain import ExplorTotalDeze
 from training.brains.statistical.elite_memory_brain import StatEliteMemoryBrain
 from training.brains.statistical.paridade_faixas_brain import StatParidadeFaixasBrain
 from training.brains.structural.pattern_shape_brain import StructuralPatternShapeBrain
+from training.brains.heuristic.heuristic_brains import build_heuristic_brains
+from training.brains.structural.core_protect_brain import StructuralCoreProtectBrain
+from training.brains.structural.anti_absence_brain import StructuralAntiAbsenceBrain
 
 
 # ==========================
@@ -334,7 +337,12 @@ def _instantiate_brain(brain_cls, conn, **kwargs):
 # ==========================
 # TREINO (N -> N+1)
 # ==========================
-def treinar_pendencias(conn, limite_concursos: Optional[int] = None) -> Dict[str, Any]:
+def treinar_pendencias(
+    conn,
+    limite_concursos: Optional[int] = None,
+    exploration_rate: Optional[float] = None,
+    max_brain_share: Optional[float] = None,
+) -> Dict[str, Any]:
     concursos = _fetch_all_concursos(conn)
     if len(concursos) < 2:
         raise RuntimeError("❌ Banco tem poucos concursos. Rode START/startBD.py e/ou START/update_concursos.py.")
@@ -358,7 +366,13 @@ def treinar_pendencias(conn, limite_concursos: Optional[int] = None) -> Dict[str
     _log("=========================================")
 
     # BrainHub + brains
-    hub = BrainHub(conn)
+    hub_kwargs: Dict[str, float] = {}
+    if exploration_rate is not None:
+        hub_kwargs["exploration_rate"] = float(exploration_rate)
+    if max_brain_share is not None:
+        hub_kwargs["max_brain_share"] = float(max_brain_share)
+
+    hub = BrainHub(conn, **hub_kwargs)
 
     # IMPORTANTÍSSIMO: usamos instanciação adaptativa (não quebra por kwargs)
     hub.register(_instantiate_brain(StatFreqGlobalBrain, conn))
@@ -372,6 +386,10 @@ def treinar_pendencias(conn, limite_concursos: Optional[int] = None) -> Dict[str
     hub.register(_instantiate_brain(StatEliteMemoryBrain, conn))
     hub.register(_instantiate_brain(StatParidadeFaixasBrain, conn))
     hub.register(_instantiate_brain(StructuralPatternShapeBrain, conn))
+    hub.register(_instantiate_brain(StructuralCoreProtectBrain, conn))
+    hub.register(_instantiate_brain(StructuralAntiAbsenceBrain, conn))
+    for brain in build_heuristic_brains(conn):
+        hub.register(brain)
 
     hub.load_all()  # carrega estado persistido dos cérebros
 
@@ -508,7 +526,13 @@ def treinar_pendencias(conn, limite_concursos: Optional[int] = None) -> Dict[str
     return resumo
 
 
-def run(loop: bool, sleep_min: int, limite_concursos: Optional[int]) -> None:
+def run(
+    loop: bool,
+    sleep_min: int,
+    limite_concursos: Optional[int],
+    exploration_rate: Optional[float],
+    max_brain_share: Optional[float],
+) -> None:
     """
     Modo 24/7:
     - roda treinos pendentes
@@ -517,7 +541,12 @@ def run(loop: bool, sleep_min: int, limite_concursos: Optional[int]) -> None:
     while True:
         conn = get_conn()
         try:
-            resumo = treinar_pendencias(conn, limite_concursos=limite_concursos)
+            resumo = treinar_pendencias(
+                conn,
+                limite_concursos=limite_concursos,
+                exploration_rate=exploration_rate,
+                max_brain_share=max_brain_share,
+            )
         finally:
             try:
                 conn.close()
@@ -539,9 +568,17 @@ def main():
     parser.add_argument("--loop", action="store_true", help="Roda em loop (24/7), dormindo quando não houver novos concursos.")
     parser.add_argument("--sleep-min", type=int, default=30, help="Minutos para dormir quando não houver novos concursos (modo --loop).")
     parser.add_argument("--limite", type=int, default=None, help="Limitar quantos concursos treinar nesta execução (debug).")
+    parser.add_argument("--exploration-rate", type=float, default=None, help="Exploração do BrainHub (opcional).")
+    parser.add_argument("--max-brain-share", type=float, default=None, help="Limite por cérebro no BrainHub (opcional).")
     args = parser.parse_args()
 
-    run(loop=bool(args.loop), sleep_min=int(args.sleep_min), limite_concursos=args.limite)
+    run(
+        loop=bool(args.loop),
+        sleep_min=int(args.sleep_min),
+        limite_concursos=args.limite,
+        exploration_rate=args.exploration_rate,
+        max_brain_share=args.max_brain_share,
+    )
 
 
 if __name__ == "__main__":
