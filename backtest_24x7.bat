@@ -17,7 +17,7 @@ echo   BACKTEST 24x7 - IA TREVO
 echo =========================================
 
 REM ---- Configs (ajuste se quiser) ----
-set VENV_DIR=.venv
+set VENV_DIR=venv
 set LOG_DIR=logs
 set LOG_FILE=%LOG_DIR%\backtest_24x7.log
 
@@ -53,18 +53,14 @@ echo [INFO] Projeto: %CD%
 echo [INFO] LOG: %LOG_FILE%
 echo.
 
-REM ---- Ativar venv ----
-if exist "%VENV_DIR%\Scripts\activate.bat" (
-  echo [OK] Ativando venv: %VENV_DIR%
-  call "%VENV_DIR%\Scripts\activate.bat"
+cd /d "%~dp0"
+
+REM Ativar venv (se existir)
+if exist "venv\Scripts\activate.bat" (
+  echo [OK] Ativando venv...
+  call "venv\Scripts\activate.bat"
 ) else (
-  echo [ERRO] Venv nao encontrada em "%VENV_DIR%".
-  echo Crie sua venv assim:
-  echo   python -m venv .venv
-  echo   .venv\Scripts\pip install -r requirements.txt
-  echo.
-  pause
-  exit /b 1
+  echo [AVISO] venv nao encontrado. Rodando com Python do sistema...
 )
 
 REM ---- Loop infinito ----
