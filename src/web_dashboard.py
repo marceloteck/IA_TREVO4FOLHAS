@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Dict, Optional
 import sys
 
-from flask import Flask, jsonify, redirect, render_template, request, url_for
+from flask import Flask, jsonify, redirect, render_template, request, send_file, url_for
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -21,6 +21,7 @@ app = Flask(__name__, template_folder="templates", static_folder="static")
 REPORTS_DIR = ROOT / "reports"
 REPORT_15 = REPORTS_DIR / "relatorio_avaliacao_15.json"
 REPORT_18 = REPORTS_DIR / "relatorio_avaliacao_18.json"
+REPORT_HTML = REPORTS_DIR / "dashboard.html"
 
 
 @dataclass
@@ -36,6 +37,7 @@ class TaskStatus:
 TASKS: Dict[str, TaskStatus] = {
     "avaliacao": TaskStatus(),
     "treino": TaskStatus(),
+    "relatorio_html": TaskStatus(),
 }
 
 
@@ -95,6 +97,7 @@ def index():
         "dashboard.html",
         relatorio_15=relatorio_15,
         relatorio_18=relatorio_18,
+        relatorio_html_disponivel=REPORT_HTML.exists(),
         tasks=TASKS,
     )
 
@@ -172,6 +175,17 @@ def avaliar():
         run_command("avaliacao", cmd_15, REPORTS_DIR / "avaliacao_15.log", args)
         if TASKS["avaliacao"].status == "completed":
             run_command("avaliacao", cmd_18, REPORTS_DIR / "avaliacao_18.log", args)
+        if (
+            TASKS["avaliacao"].status == "completed"
+            and REPORT_15.exists()
+            and REPORT_18.exists()
+        ):
+            run_command(
+                "relatorio_html",
+                [sys.executable, "scripts/gerar_dashboard_html.py"],
+                REPORTS_DIR / "gerar_dashboard.log",
+                {},
+            )
 
     thread = threading.Thread(target=run_both, daemon=True)
     thread.start()
@@ -197,6 +211,27 @@ def treinar():
     args = {"limite": limite, "loop": str(loop), "sleep_min": sleep_min}
     start_background_task("treino", cmd, "treino.log", args)
     return redirect(url_for("index"))
+
+
+@app.route("/gerar-relatorio", methods=["POST"])
+def gerar_relatorio():
+    if TASKS["relatorio_html"].status == "running":
+        return redirect(url_for("index"))
+
+    start_background_task(
+        "relatorio_html",
+        [sys.executable, "scripts/gerar_dashboard_html.py"],
+        "gerar_dashboard.log",
+        {},
+    )
+    return redirect(url_for("index"))
+
+
+@app.route("/relatorio-html")
+def relatorio_html():
+    if not REPORT_HTML.exists():
+        return jsonify({"error": "relatorio not found"}), 404
+    return send_file(REPORT_HTML, mimetype="text/html")
 
 
 @app.route("/status/<task_name>")
