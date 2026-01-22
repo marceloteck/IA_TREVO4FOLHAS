@@ -1,0 +1,9 @@
+# ===============================
+# Banco de dados SQLite - Lotofácil
+# ===============================
+data/BD/lotofacil.db
+data/BD/lotofacil.db-*
+data/BD/lotofacil*.db
+data/BD/*.db
+data/BD/*.sqlite
+data/BD/*.sqlite3

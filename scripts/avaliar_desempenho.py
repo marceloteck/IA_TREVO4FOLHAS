@@ -85,6 +85,8 @@ def build_hub(
         consensus_bonus=consensus_bonus,
         consensus_min_votes=consensus_min_votes,
     )
+def build_hub(conn, exploration_rate: float) -> BrainHub:
+    hub = BrainHub(conn, exploration_rate=exploration_rate)
     hub.register(_instantiate_brain(StatFreqGlobalBrain, conn))
     hub.register(_instantiate_brain(StatFreqRecenteBrain, conn, janela=120))
     hub.register(_instantiate_brain(TemporalAtrasoBrain, conn))
@@ -162,6 +164,7 @@ def avaliar(
         consensus_bonus=consensus_bonus,
         consensus_min_votes=consensus_min_votes,
     )
+    hub = build_hub(conn, exploration_rate=exploration_rate)
 
     for concurso_n in concursos:
         resultado_n1 = _fetch_result(conn, concurso_n + 1)
