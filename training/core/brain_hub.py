@@ -1,9 +1,9 @@
 # training/core/brain_hub.py
 from __future__ import annotations
 
-from typing import Any, Dict, List, Tuple␊
-from collections import defaultdict␊
-import random␊
+from typing import Any, Dict, List, Tuple
+from collections import defaultdict
+import random
 
 from training.core.brain_interface import BrainInterface
 
@@ -13,7 +13,7 @@ def jaccard(a: List[int], b: List[int]) -> float:
     uni = len(sa | sb)
     return inter / uni if uni else 0.0
 
-class BrainHub:␊
+class BrainHub:
     """
     BrainHub (linha única):
     - seleciona cérebros por relevância
