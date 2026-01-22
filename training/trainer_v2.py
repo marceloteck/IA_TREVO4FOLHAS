@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import sys
 import subprocess
 from pathlib import Path
 
@@ -41,6 +42,17 @@ AVALIAR_TOP_K = 40                   # quantos avaliar por tamanho (custo contro
 SALVAR_MEMORIA_MIN = 12              # salva memoria_jogos a partir de 11 acertos
 PERSISTIR_A_CADA = 5                 # salva estados + checkpoint a cada X concursos
 SCORE_TAG = "trainer_v2_hub"         # tag para auditoria
+
+
+# ==========================
+# UTIL
+# ==========================
+def now_str() -> str:
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _log(msg: str) -> None:
+    print(f"[{now_str()}] {msg}")
 
 
 # ==========================
@@ -85,17 +97,6 @@ def _try_commit_if_good_every(
         _log(f"⚠️ Falha ao tentar commit automático: {e}")
 
     return now
-
-
-# ==========================
-# UTIL
-# ==========================
-def now_str() -> str:
-    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-
-def _log(msg: str) -> None:
-    print(f"[{now_str()}] {msg}")
 
 
 def _fetch_all_concursos(conn) -> List[int]:
@@ -187,8 +188,8 @@ def _insert_tentativa(
 
     cols = [
         "concurso_n", "concurso_n1", "tipo_jogo", "tentativa",
-        "d1","d2","d3","d4","d5","d6","d7","d8","d9","d10","d11","d12","d13","d14","d15","d16","d17","d18",
-        "acertos", "score", "score_tag", "brain_id", "tempo_exec", "timestamp"
+        "d1", "d2", "d3", "d4", "d5", "d6", "d7", "d8", "d9", "d10", "d11", "d12", "d13", "d14", "d15", "d16", "d17", "d18",
+        "acertos", "score", "score_tag", "brain_id", "tempo_exec", "timestamp",
     ]
 
     values = [
@@ -238,8 +239,8 @@ def _insert_memoria_forte(
 
     cols = [
         "concurso_n", "concurso_n1", "tipo_jogo",
-        "d1","d2","d3","d4","d5","d6","d7","d8","d9","d10","d11","d12","d13","d14","d15","d16","d17","d18",
-        "acertos", "peso", "origem", "timestamp"
+        "d1", "d2", "d3", "d4", "d5", "d6", "d7", "d8", "d9", "d10", "d11", "d12", "d13", "d14", "d15", "d16", "d17", "d18",
+        "acertos", "peso", "origem", "timestamp",
     ]
 
     values = [
@@ -274,7 +275,7 @@ def _build_context(conn, concurso_n: int, janela_recente: int) -> Dict[str, Any]
     - freq_recente (dict)
     """
     historico = _fetch_recent_results(conn, concurso_n=concurso_n, janela=janela_recente)
-    ultimo = historico[-1] if historico else _fetch_result(conn, concurso_n) or []
+    ultimo = historico[-1] if historico else (_fetch_result(conn, concurso_n) or [])
 
     freq: Dict[int, int] = {i: 0 for i in range(1, 26)}
     for r in historico:
@@ -371,7 +372,7 @@ def treinar_pendencias(
     _log("=========================================")
 
     # BrainHub + brains
-    hub_kwargs: Dict[str, float] = {}
+    hub_kwargs: Dict[str, Any] = {}
     if exploration_rate is not None:
         hub_kwargs["exploration_rate"] = float(exploration_rate)
     if max_brain_share is not None:
@@ -403,6 +404,7 @@ def treinar_pendencias(
     hub.register(_instantiate_brain(StructuralPatternShapeBrain, conn))
     hub.register(_instantiate_brain(StructuralCoreProtectBrain, conn))
     hub.register(_instantiate_brain(StructuralAntiAbsenceBrain, conn))
+
     for brain in build_heuristic_brains(conn):
         hub.register(brain)
 
@@ -508,7 +510,7 @@ def treinar_pendencias(
         if idx % int(PERSISTIR_A_CADA) == 0:
             hub.save_all()
 
-        # ✅ tenta commit a cada 30 min (só no GitHub Actions)
+        # ✅ tenta commit a cada ~29 min (só no GitHub Actions)
         last_commit_ts = _try_commit_if_good_every(last_commit_ts, interval_min=29)
 
         melhor15 = top15[0]["acertos"] if top15 else 0
@@ -588,18 +590,22 @@ def run(
             time.sleep(2)
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description="TRAINER_V2 — Treinamento incremental N->N+1 (BrainHub)")
     parser.add_argument("--loop", action="store_true", help="Roda em loop (24/7), dormindo quando não houver novos concursos.")
     parser.add_argument("--sleep-min", type=int, default=30, help="Minutos para dormir quando não houver novos concursos (modo --loop).")
     parser.add_argument("--limite", type=int, default=None, help="Limitar quantos concursos treinar nesta execução (debug).")
+
     parser.add_argument("--exploration-rate", type=float, default=None, help="Exploração do BrainHub (opcional).")
     parser.add_argument("--max-brain-share", type=float, default=None, help="Limite por cérebro no BrainHub (opcional).")
+
     parser.add_argument("--quota-enabled", action="store_true", help="Ativar quota por cérebro no Top N.")
     parser.add_argument("--quota-max-per-brain", type=int, default=0, help="Limite absoluto por cérebro no Top N.")
+
     parser.add_argument("--consensus-enabled", action="store_true", help="Ativar bônus por consenso entre cérebros.")
     parser.add_argument("--consensus-bonus", type=float, default=0.02, help="Bônus por consenso de candidatos.")
     parser.add_argument("--consensus-min-votes", type=int, default=2, help="Mínimo de votos para bônus de consenso.")
+
     args = parser.parse_args()
 
     run(
@@ -608,9 +614,9 @@ def main():
         limite_concursos=args.limite,
         exploration_rate=args.exploration_rate,
         max_brain_share=args.max_brain_share,
-        quota_enabled=args.quota_enabled,
+        quota_enabled=bool(args.quota_enabled),
         quota_max_per_brain=max(0, int(args.quota_max_per_brain)),
-        consensus_enabled=args.consensus_enabled,
+        consensus_enabled=bool(args.consensus_enabled),
         consensus_bonus=float(args.consensus_bonus),
         consensus_min_votes=max(2, int(args.consensus_min_votes)),
     )

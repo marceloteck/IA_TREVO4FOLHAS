@@ -7,11 +7,13 @@ from typing import Any, Dict, List, Set, Tuple
 
 from training.core.brain_interface import BrainInterface
 
+
 def jaccard(a: List[int], b: List[int]) -> float:
     sa, sb = set(a), set(b)
     inter = len(sa & sb)
     uni = len(sa | sb)
     return inter / uni if uni else 0.0
+
 
 class BrainHub:
     """
@@ -37,10 +39,13 @@ class BrainHub:
         self.db = db_conn
         self.brains: List[BrainInterface] = []
         self.meta = defaultdict(lambda: {"usos": 0, "pontos": 0, "q14": 0, "q15": 0})
+
         self.exploration_rate = max(0.0, min(0.25, float(exploration_rate)))
         self.max_brain_share = max(0.1, min(0.7, float(max_brain_share)))
+
         self.quota_enabled = bool(quota_enabled)
         self.quota_max_per_brain = max(0, int(quota_max_per_brain))
+
         self.consensus_enabled = bool(consensus_enabled)
         self.consensus_bonus = max(0.0, float(consensus_bonus))
         self.consensus_min_votes = max(2, int(consensus_min_votes))
@@ -49,6 +54,7 @@ class BrainHub:
         meta = self.meta.get(brain_id)
         if not meta:
             return 1.0
+
         usos = max(1, int(meta.get("usos", 0)))
         pontos = float(meta.get("pontos", 0))
         q14 = int(meta.get("q14", 0))
@@ -75,18 +81,23 @@ class BrainHub:
         raw_scores: Dict[str, List[float]] = defaultdict(list)
 
         votes_map: Dict[Tuple[int, ...], Set[str]] = defaultdict(set)
+
         for b in self.brains:
             if not getattr(b, "enabled", True):
                 continue
+
             rel = float(b.evaluate_context(context))
             if rel <= 0:
                 continue
+
             jogos = b.generate(context=context, size=size, n=per_brain)
             for j in jogos:
                 jogo_sorted = tuple(sorted(j))
                 raw = float(b.score_game(j, context))
                 raw_scores[b.id].append(raw)
+
                 votes_map[jogo_sorted].add(b.id)
+
                 cand.append(
                     {
                         "jogo": list(jogo_sorted),
@@ -100,18 +111,21 @@ class BrainHub:
             return []
 
         score_bounds = {
-            brain_id: (min(scores), max(scores)) for brain_id, scores in raw_scores.items()
+            brain_id: (min(scores), max(scores))
+            for brain_id, scores in raw_scores.items()
+            if scores
         }
 
         for c in cand:
-            min_s, max_s = score_bounds[c["brain_id"]]
+            min_s, max_s = score_bounds.get(c["brain_id"], (0.0, 0.0))
             if max_s > min_s:
-                norm = (c["score_raw"] - min_s) / (max_s - min_s)
+                norm = (float(c["score_raw"]) - float(min_s)) / (float(max_s) - float(min_s))
             else:
                 norm = 0.5
 
-            meta_weight = self._meta_weight(c["brain_id"])
-            calibrated = (norm * 0.65 + c["rel"] * 0.35) * meta_weight
+            meta_weight = self._meta_weight(str(c["brain_id"]))
+            calibrated = (norm * 0.65 + float(c["rel"]) * 0.35) * meta_weight
+
             noise = random.uniform(0.0, self.exploration_rate)
             score = calibrated * (1.0 - self.exploration_rate) + noise
 
@@ -120,7 +134,8 @@ class BrainHub:
                 c["consensus_votes"] = votes
                 if votes >= self.consensus_min_votes:
                     score += self.consensus_bonus
-            c["score"] = score
+
+            c["score"] = float(score)
 
         return cand
 
@@ -131,7 +146,7 @@ class BrainHub:
         max_sim: float,
         max_per_brain: int,
     ) -> List[Dict[str, Any]]:
-        candidatos.sort(key=lambda x: x["score"], reverse=True)
+        candidatos.sort(key=lambda x: float(x["score"]), reverse=True)
         escolhidos: List[Dict[str, Any]] = []
         brain_counts: Dict[str, int] = defaultdict(int)
 
@@ -139,21 +154,25 @@ class BrainHub:
             for c in candidatos:
                 if len(escolhidos) >= top_n:
                     break
-                if brain_counts[c["brain_id"]] >= max_per_brain:
+
+                bid = str(c["brain_id"])
+                if brain_counts[bid] >= max_per_brain:
                     continue
+
                 jogo = c["jogo"]
                 ok = True
                 for e in escolhidos:
                     if jaccard(jogo, e["jogo"]) >= threshold:
                         ok = False
                         break
+
                 if ok:
                     escolhidos.append(c)
-                    brain_counts[c["brain_id"]] += 1
+                    brain_counts[bid] += 1
 
-        pick_with_threshold(max_sim)
+        pick_with_threshold(float(max_sim))
 
-        relax = max_sim
+        relax = float(max_sim)
         while len(escolhidos) < top_n and relax < 0.98:
             relax = min(0.98, relax + 0.03)
             pick_with_threshold(relax)
@@ -162,29 +181,43 @@ class BrainHub:
 
     def generate_games(self, context: Dict[str, Any], size: int, per_brain: int, top_n: int) -> List[Dict[str, Any]]:
         candidatos = self.generate_candidates(context, size, per_brain)
+
         # diversidade mais rígida para 15, mais leve para 18
-        max_sim = 0.80 if size == 15 else 0.88
-        densidade = len(candidatos) / max(1, top_n)
+        max_sim = 0.80 if int(size) == 15 else 0.88
+
+        densidade = len(candidatos) / max(1, int(top_n))
         if densidade < 2.0:
             max_sim = min(0.95, max_sim + 0.05)
-        share = self.max_brain_share if size == 15 else min(0.5, self.max_brain_share + 0.1)
-        max_per_brain = max(2, int(top_n * share))
+
+        share = self.max_brain_share if int(size) == 15 else min(0.5, self.max_brain_share + 0.1)
+        max_per_brain = max(2, int(int(top_n) * float(share)))
+
         if self.quota_enabled and self.quota_max_per_brain > 0:
-            max_per_brain = min(max_per_brain, self.quota_max_per_brain)
+            max_per_brain = min(max_per_brain, int(self.quota_max_per_brain))
+
         return self.diversify(
             candidatos,
-            top_n=top_n,
-            max_sim=max_sim,
-            max_per_brain=max_per_brain,
+            top_n=int(top_n),
+            max_sim=float(max_sim),
+            max_per_brain=int(max_per_brain),
         )
 
-    def learn(self, concurso_n: int, jogo: List[int], resultado_n1: List[int], pontos: int, context: Dict[str, Any], brain_id: str):
-        # meta-score do hub
-        m = self.meta[brain_id]
+    def learn(
+        self,
+        concurso_n: int,
+        jogo: List[int],
+        resultado_n1: List[int],
+        pontos: int,
+        context: Dict[str, Any],
+        brain_id: str,
+    ) -> None:
+        m = self.meta[str(brain_id)]
         m["usos"] += 1
-        m["pontos"] += pontos
-        if pontos >= 14: m["q14"] += 1
-        if pontos >= 15: m["q15"] += 1
+        m["pontos"] += int(pontos)
+        if int(pontos) >= 14:
+            m["q14"] += 1
+        if int(pontos) >= 15:
+            m["q15"] += 1
 
         for b in self.brains:
             if b.id == brain_id:
