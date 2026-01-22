@@ -129,6 +129,11 @@ trainer_incremental TESTE.bat
 python scripts/avaliar_desempenho.py
 ```
 
+### Ciclo automático: treina → avalia → ajusta → treina
+```bash
+python scripts/ciclo_treino_avalia.py --config config/ciclo_treino_avalia.json
+```
+
 ### Gerar dashboard estático em HTML (a partir dos relatórios)
 ```bash
 python scripts/gerar_dashboard_html.py
