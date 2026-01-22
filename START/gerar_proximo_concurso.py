@@ -215,7 +215,6 @@ def insert_pred(
     dezenas_sorted = sorted(int(x) for x in dezenas)
     payload = dezenas_sorted + [None] * (18 - len(dezenas_sorted))
 
-    # Montagem segura (nunca mais quebra por contagem errada)
     cols = [
         "concurso_previsto", "tamanho", "ordem",
         "d1","d2","d3","d4","d5","d6","d7","d8","d9","d10","d11","d12","d13","d14","d15","d16","d17","d18",
@@ -245,15 +244,13 @@ def insert_pred(
         now_str(),
     ]
 
-    placeholders = ",".join(["?"] * len(cols))
+    placeholders = ",".join(["?"] * len(values))
     sql = f"INSERT OR IGNORE INTO predicoes_proximo ({','.join(cols)}) VALUES ({placeholders})"
 
     cur = conn.cursor()
     cur.execute(sql, values)
     conn.commit()
     return cur.rowcount > 0
-
-
 
 
 # ==========================
@@ -287,9 +284,9 @@ def register_brains_auto(conn, hub: BrainHub) -> List[str]:
     _try_add("training.brains.statistical.paridade_faixas_brain", "StatParidadeFaixasBrain")
     _try_add("training.brains.structural.pattern_shape_brain", "StructuralPatternShapeBrain")
     _try_add("training.brains.structural.core_protect_brain", "StructuralCoreProtectBrain")
+
     try:
         from training.brains.heuristic.heuristic_brains import build_heuristic_brains
-
         for brain in build_heuristic_brains(conn):
             _register(brain)
     except Exception:
@@ -358,12 +355,9 @@ def get_profile_weights(perfil: str) -> Tuple[float, float, float, float]:
     """
     perfil = (perfil or "balanceado").lower().strip()
     if perfil == "conservador":
-        # mais “forma” + frequência, menos “memória”
         return (0.50, 0.25, 0.10, 0.15)
     if perfil == "agressivo":
-        # confia mais na memória 14/15 e menos em shape
         return (0.55, 0.15, 0.25, 0.05)
-    # balanceado
     return (0.55, 0.20, 0.15, 0.10)
 
 
