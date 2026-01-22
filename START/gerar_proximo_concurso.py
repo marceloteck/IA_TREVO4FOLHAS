@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 import sqlite3
 import random
+from collections import Counter
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -407,6 +409,17 @@ def ran_penalty(
     return min(0.9, penalty)
 
 
+def passa_RAN(
+    jogo: List[int],
+    core_a: List[int],
+    core_b: List[int],
+    core_c: List[int],
+    limiar: float = 0.6,
+) -> bool:
+    return ran_penalty(jogo, core_a, core_b, core_c) < float(limiar)
+
+
+def compactar_por_custo(
 def compact_game(
     jogo: List[int],
     target_size: int,
@@ -457,6 +470,11 @@ def generate_for_size(
     max_brain_share: float,
     ran_strict: bool,
     ensemble_bonus: float,
+    quota_enabled: bool,
+    quota_max_per_brain: int,
+    consensus_enabled: bool,
+    consensus_bonus: float,
+    consensus_min_votes: int,
 ) -> Path:
     ultimo_concurso = fetch_max_concurso(conn)
     proximo_concurso = ultimo_concurso + 1
@@ -475,6 +493,16 @@ def generate_for_size(
                 key = tuple(sorted((jogo_hist[i], jogo_hist[j])))
                 pair_scores[key] = pair_scores.get(key, 0) + 1
 
+    hub = BrainHub(
+        conn,
+        exploration_rate=exploration_rate,
+        max_brain_share=max_brain_share,
+        quota_enabled=quota_enabled,
+        quota_max_per_brain=quota_max_per_brain,
+        consensus_enabled=consensus_enabled,
+        consensus_bonus=consensus_bonus,
+        consensus_min_votes=consensus_min_votes,
+    )
     hub = BrainHub(conn, exploration_rate=exploration_rate, max_brain_share=max_brain_share)
     loaded = register_brains_auto(conn, hub)
     if not loaded:
@@ -494,6 +522,15 @@ def generate_for_size(
     w_hub, w_freq, w_mem, w_shape, w_ran = get_profile_weights(perfil)
 
     jogo_counts: Dict[Tuple[int, ...], int] = {}
+    brain_dist_pos_quota = Counter(c["brain_id"] for c in candidatos)
+    compacted_candidates = 0
+    for c in candidatos:
+        jogo_raw = tuple(sorted(int(x) for x in c["jogo"]))
+        if base_size != size:
+            jogo_raw = tuple(
+                compactar_por_custo(list(jogo_raw), size, core_a, core_b, core_c, freq, pair_scores)
+            )
+            compacted_candidates += 1
     for c in candidatos:
         jogo_raw = tuple(sorted(int(x) for x in c["jogo"]))
         if base_size != size:
@@ -501,15 +538,19 @@ def generate_for_size(
         jogo_counts[jogo_raw] = jogo_counts.get(jogo_raw, 0) + 1
 
     ranked: List[Dict[str, Any]] = []
+    ran_cortados = 0
     for c in candidatos:
         jogo = [int(x) for x in c["jogo"]]
         if base_size != size:
+            jogo = compactar_por_custo(jogo, size, core_a, core_b, core_c, freq, pair_scores)
             jogo = compact_game(jogo, size, core_a, core_b, core_c, freq, pair_scores)
         s_hub = float(c.get("score", 0.0))
         s_freq = score_freq_recente(jogo, freq)
         s_mem = score_memoria(jogo, memoria_1415)
         s_shape = score_shape(jogo, size)
         s_ran = ran_penalty(jogo, core_a, core_b, core_c)
+        if ran_strict and not passa_RAN(jogo, core_a, core_b, core_c):
+            ran_cortados += 1
         if ran_strict and s_ran >= 0.6:
             continue
         jogo_key = tuple(sorted(jogo))
@@ -541,6 +582,9 @@ def generate_for_size(
     ranked.sort(key=lambda x: x["score_final"], reverse=True)
     final = diversify_ranked(ranked, top_k=qtd, max_sim=max_sim)
     strongest = ranked[: max(0, int(qtd_strong))]
+    compacted_15 = 0
+    if base_size != size and size == 15:
+        compacted_15 = len(final)
 
     reports_dir = ROOT / "reports"
     reports_dir.mkdir(parents=True, exist_ok=True)
@@ -562,6 +606,12 @@ def generate_for_size(
     lines.append(f"Candidatos por cérebro: {per_brain}")
     lines.append(f"Top_n pós-hub: {top_n}")
     lines.append(f"Diversidade max_sim (Jaccard): {max_sim}")
+    if quota_enabled:
+        lines.append(f"Quota ativa: max_per_brain={quota_max_per_brain}")
+    if consensus_enabled:
+        lines.append(
+            f"Consenso ativo: bonus={consensus_bonus} min_votos={consensus_min_votes}"
+        )
     if strongest:
         lines.append(f"Jogos fortes extras: {len(strongest)}")
     lines.append("=========================================\n")
@@ -602,6 +652,22 @@ def generate_for_size(
     lines.append("")
 
     out_path.write_text("\n".join(lines), encoding="utf-8")
+    meta_path = reports_dir / f"proximo_concurso_{proximo_concurso}_jogos_{size}_meta.json"
+    meta_payload = {
+        "timestamp": now_str(),
+        "size": size,
+        "base_size": base_size,
+        "ran_cortados": ran_cortados,
+        "compactados_15": compacted_15,
+        "compactados_candidatos": compacted_candidates,
+        "brain_distribution_pos_quota": dict(brain_dist_pos_quota),
+        "quota_enabled": quota_enabled,
+        "quota_max_per_brain": quota_max_per_brain,
+        "consensus_enabled": consensus_enabled,
+        "consensus_bonus": consensus_bonus,
+        "consensus_min_votes": consensus_min_votes,
+    }
+    meta_path.write_text(json.dumps(meta_payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
     if salvar_db:
         ensure_pred_table(conn)
@@ -652,6 +718,11 @@ def main() -> None:
     parser.add_argument("--max-brain-share", type=float, default=0.4, help="Limite de participação por cérebro no Top N.")
     parser.add_argument("--ran-strict", action="store_true", help="Descartar jogos com RAN alto (proteção de núcleo).")
     parser.add_argument("--ensemble-bonus", type=float, default=0.02, help="Bônus quando o jogo aparece em 2+ cérebros.")
+    parser.add_argument("--quota-enabled", action="store_true", help="Ativar quota por cérebro no Top N.")
+    parser.add_argument("--quota-max-per-brain", type=int, default=0, help="Limite absoluto por cérebro no Top N.")
+    parser.add_argument("--consensus-enabled", action="store_true", help="Ativar bônus por consenso entre cérebros.")
+    parser.add_argument("--consensus-bonus", type=float, default=0.02, help="Bônus por consenso de candidatos.")
+    parser.add_argument("--consensus-min-votes", type=int, default=2, help="Mínimo de votos para bônus de consenso.")
     parser.add_argument("--perfil", type=str, default="balanceado", choices=["conservador", "balanceado", "agressivo"])
     parser.add_argument("--salvar-db", action="store_true", help="Salvar jogos gerados na tabela predicoes_proximo.")
     parser.add_argument("--seed", type=int, default=None, help="Seed para reprodutibilidade (opcional).")
@@ -708,6 +779,11 @@ def main() -> None:
             max_brain_share=float(args.max_brain_share),
             ran_strict=bool(args.ran_strict),
             ensemble_bonus=float(args.ensemble_bonus),
+            quota_enabled=bool(args.quota_enabled),
+            quota_max_per_brain=max(0, int(args.quota_max_per_brain)),
+            consensus_enabled=bool(args.consensus_enabled),
+            consensus_bonus=float(args.consensus_bonus),
+            consensus_min_votes=max(2, int(args.consensus_min_votes)),
         )
 
         if args.second_size is not None and args.second_qtd is not None:
@@ -730,6 +806,11 @@ def main() -> None:
                 max_brain_share=float(args.max_brain_share),
                 ran_strict=bool(args.ran_strict),
                 ensemble_bonus=float(args.ensemble_bonus),
+                quota_enabled=bool(args.quota_enabled),
+                quota_max_per_brain=max(0, int(args.quota_max_per_brain)),
+                consensus_enabled=bool(args.consensus_enabled),
+                consensus_bonus=float(args.consensus_bonus),
+                consensus_min_votes=max(2, int(args.consensus_min_votes)),
             )
 
     finally:

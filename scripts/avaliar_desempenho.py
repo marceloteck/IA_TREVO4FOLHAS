@@ -67,6 +67,24 @@ def clone_db(orig_path: Path, dest_path: Path) -> None:
         src.backup(dst)
 
 
+def build_hub(
+    conn,
+    exploration_rate: float,
+    quota_enabled: bool,
+    quota_max_per_brain: int,
+    consensus_enabled: bool,
+    consensus_bonus: float,
+    consensus_min_votes: int,
+) -> BrainHub:
+    hub = BrainHub(
+        conn,
+        exploration_rate=exploration_rate,
+        quota_enabled=quota_enabled,
+        quota_max_per_brain=quota_max_per_brain,
+        consensus_enabled=consensus_enabled,
+        consensus_bonus=consensus_bonus,
+        consensus_min_votes=consensus_min_votes,
+    )
 def build_hub(conn, exploration_rate: float) -> BrainHub:
     hub = BrainHub(conn, exploration_rate=exploration_rate)
     hub.register(_instantiate_brain(StatFreqGlobalBrain, conn))
@@ -126,12 +144,26 @@ def avaliar(
     exploration_rate: float,
     simular_aprendizado: bool,
     concursos: List[int],
+    quota_enabled: bool,
+    quota_max_per_brain: int,
+    consensus_enabled: bool,
+    consensus_bonus: float,
+    consensus_min_votes: int,
 ) -> Dict[str, Any]:
     resultados = {15: ResultadoTipo(), 18: ResultadoTipo()}
     distribuicao = {15: Counter(), 18: Counter()}
     brains_rank = defaultdict(int)
     brains_stats = _brain_metrics()
 
+    hub = build_hub(
+        conn,
+        exploration_rate=exploration_rate,
+        quota_enabled=quota_enabled,
+        quota_max_per_brain=quota_max_per_brain,
+        consensus_enabled=consensus_enabled,
+        consensus_bonus=consensus_bonus,
+        consensus_min_votes=consensus_min_votes,
+    )
     hub = build_hub(conn, exploration_rate=exploration_rate)
 
     for concurso_n in concursos:
@@ -239,6 +271,11 @@ def avaliar(
         "top_n": top_n,
         "avaliar_top_k": avaliar_top_k,
         "exploration_rate": exploration_rate,
+        "quota_enabled": quota_enabled,
+        "quota_max_per_brain": quota_max_per_brain,
+        "consensus_enabled": consensus_enabled,
+        "consensus_bonus": consensus_bonus,
+        "consensus_min_votes": consensus_min_votes,
         "simular_aprendizado": simular_aprendizado,
         "resumo": resumo,
         "brains_top1": dict(sorted(brains_rank.items(), key=lambda x: x[1], reverse=True)),
@@ -257,6 +294,11 @@ def main() -> None:
     parser.add_argument("--inicio", type=int, default=None, help="Concurso inicial (inclusive).")
     parser.add_argument("--fim", type=int, default=None, help="Concurso final (inclusive).")
     parser.add_argument("--exploration-rate", type=float, default=0.08, help="Taxa de exploração do BrainHub.")
+    parser.add_argument("--quota-enabled", action="store_true", help="Ativar quota por cérebro no Top N.")
+    parser.add_argument("--quota-max-per-brain", type=int, default=0, help="Limite absoluto por cérebro no Top N.")
+    parser.add_argument("--consensus-enabled", action="store_true", help="Ativar bônus por consenso entre cérebros.")
+    parser.add_argument("--consensus-bonus", type=float, default=0.02, help="Bônus por consenso de candidatos.")
+    parser.add_argument("--consensus-min-votes", type=int, default=2, help="Mínimo de votos para bônus de consenso.")
     parser.add_argument(
         "--simular-aprendizado",
         action="store_true",
@@ -302,6 +344,11 @@ def main() -> None:
         exploration_rate=args.exploration_rate,
         simular_aprendizado=args.simular_aprendizado,
         concursos=concursos,
+        quota_enabled=args.quota_enabled,
+        quota_max_per_brain=max(0, int(args.quota_max_per_brain)),
+        consensus_enabled=args.consensus_enabled,
+        consensus_bonus=float(args.consensus_bonus),
+        consensus_min_votes=max(2, int(args.consensus_min_votes)),
     )
 
     print(json.dumps(resultado, indent=2, ensure_ascii=False))
