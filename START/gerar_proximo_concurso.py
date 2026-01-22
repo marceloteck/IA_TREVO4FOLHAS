@@ -285,6 +285,9 @@ def register_brains_auto(conn, hub: BrainHub) -> List[str]:
     _try_add("training.brains.structural.pattern_shape_brain", "StructuralPatternShapeBrain")
     _try_add("training.brains.structural.core_protect_brain", "StructuralCoreProtectBrain")
     _try_add("training.brains.structural.anti_absence_brain", "StructuralAntiAbsenceBrain")
+    try:
+        from training.brains.heuristic.heuristic_brains import build_heuristic_brains
+
 
     try:
         from training.brains.heuristic.heuristic_brains import build_heuristic_brains
@@ -356,6 +359,12 @@ def get_profile_weights(perfil: str) -> Tuple[float, float, float, float, float]
     """
     perfil = (perfil or "balanceado").lower().strip()
     if perfil == "conservador":
+        # mais “forma” + frequência, mais proteção de núcleo
+        return (0.45, 0.22, 0.10, 0.13, 0.10)
+    if perfil == "agressivo":
+        # confia mais na memória 14/15, mas mantém proteção
+        return (0.50, 0.12, 0.25, 0.05, 0.08)
+    # balanceado
         return (0.45, 0.22, 0.10, 0.13, 0.10)
     if perfil == "agressivo":
         return (0.50, 0.12, 0.25, 0.05, 0.08)
