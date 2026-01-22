@@ -120,10 +120,6 @@ def main():
         db_override = os.getenv("DB_PATH")
         conn = get_conn(db_override) if db_override else get_conn()
         criar_schema(conn)
-        
-        conn = get_conn()
-
-        criar_schema(conn)
 
         if not CSV_PATH.exists():
             log(f"❌ CSV não encontrado: {CSV_PATH}")
