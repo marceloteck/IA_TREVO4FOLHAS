@@ -17,7 +17,7 @@ if exist "venv\Scripts\activate.bat" (
 )
 
 REM Config padrao (edite se quiser)
-set PERFIL=balanceado
+set PERFIL=agressivo
 set JANELA=300
 set PER_BRAIN=120
 set TOP_N=250
