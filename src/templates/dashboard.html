@@ -406,6 +406,7 @@
               <div class="metrics">
                 <div class="status"><span>Avaliação</span> {{ tasks["avaliacao"].status }}</div>
                 <div class="status"><span>Treino</span> {{ tasks["treino"].status }}</div>
+                <div class="status"><span>Gerador</span> {{ tasks["gerar_jogos"].status }}</div>
                 <div class="status"><span>Relatório HTML</span> {{ tasks["relatorio_html"].status }}</div>
               </div>
               <p class="muted">
@@ -455,33 +456,33 @@
           <section class="grid" id="jogos">
             <div class="card">
               <h3>Montar jogos personalizados</h3>
-              <form>
+              <form method="post" action="{{ url_for('gerar_jogos') }}">
                 <div class="row">
                   <div>
                     <label>Quantidade de dezenas</label>
-                    <select>
-                      <option>15 dezenas</option>
-                      <option>18 dezenas</option>
+                    <select name="size">
+                      <option value="15">15 dezenas</option>
+                      <option value="18">18 dezenas</option>
                     </select>
                   </div>
                   <div>
                     <label>Perfil</label>
-                    <select>
-                      <option>Conservador</option>
-                      <option selected>Balanceado</option>
-                      <option>Agressivo</option>
+                    <select name="perfil">
+                      <option value="conservador">Conservador</option>
+                      <option value="balanceado" selected>Balanceado</option>
+                      <option value="agressivo">Agressivo</option>
                     </select>
                   </div>
                   <div>
                     <label>Quantidade de jogos</label>
-                    <input type="number" value="6" />
+                    <input type="number" name="qtd" value="6" min="1" />
                   </div>
                 </div>
                 <label>Observações do grupo</label>
                 <textarea placeholder="Ex: priorizar dezenas quentes, limitar repetição..." spellcheck="false"></textarea>
                 <div class="cta">
-                  <button type="button">Gerar jogos sugeridos</button>
-                  <button type="button" class="secondary">Salvar no histórico</button>
+                  <button type="submit" name="salvar_db" value="false">Gerar jogos sugeridos</button>
+                  <button type="submit" name="salvar_db" value="true" class="secondary">Salvar no histórico</button>
                   <span>Fluxo pronto para uso em equipes.</span>
                 </div>
               </form>
