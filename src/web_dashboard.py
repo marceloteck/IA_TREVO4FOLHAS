@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import threading
 from dataclasses import dataclass, field
@@ -252,7 +253,9 @@ def status(task_name: str):
 
 def main() -> None:
     REPORTS_DIR.mkdir(parents=True, exist_ok=True)
-    app.run(host="0.0.0.0", port=5000, debug=False)
+    host = os.environ.get("HOST", "0.0.0.0")
+    port = int(os.environ.get("PORT", "5000"))
+    app.run(host=host, port=port, debug=False)
 
 
 if __name__ == "__main__":
