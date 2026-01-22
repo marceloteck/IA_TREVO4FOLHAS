@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import argparse
 import json
-import sys
-import sqlite3
 import random
+import sqlite3
+import sys
 from collections import Counter
 from datetime import datetime
 from pathlib import Path
@@ -219,9 +219,9 @@ def insert_pred(
 
     cols = [
         "concurso_previsto", "tamanho", "ordem",
-        "d1","d2","d3","d4","d5","d6","d7","d8","d9","d10","d11","d12","d13","d14","d15","d16","d17","d18",
+        "d1", "d2", "d3", "d4", "d5", "d6", "d7", "d8", "d9", "d10", "d11", "d12", "d13", "d14", "d15", "d16", "d17", "d18",
         "score_final", "score_hub", "score_freq", "score_mem", "score_shape",
-        "perfil", "janela", "per_brain", "top_n", "max_sim", "brains_ativos", "timestamp"
+        "perfil", "janela", "per_brain", "top_n", "max_sim", "brains_ativos", "timestamp",
     ]
 
     values = [
@@ -265,13 +265,14 @@ def register_brains_auto(conn, hub: BrainHub) -> List[str]:
         hub.register(brain)
         loaded.append(getattr(brain, "id", brain.__class__.__name__))
 
-    def _try_add(import_path: str, cls_name: str, *args, **kwargs):
+    def _try_add(import_path: str, cls_name: str, *args, **kwargs) -> None:
         try:
             mod = __import__(import_path, fromlist=[cls_name])
             cls = getattr(mod, cls_name)
             b = cls(conn, *args, **kwargs)
             _register(b)
         except Exception:
+            # silencioso por design (auto-detect)
             pass
 
     # Base (confirmados)
@@ -287,12 +288,10 @@ def register_brains_auto(conn, hub: BrainHub) -> List[str]:
     _try_add("training.brains.structural.pattern_shape_brain", "StructuralPatternShapeBrain")
     _try_add("training.brains.structural.core_protect_brain", "StructuralCoreProtectBrain")
     _try_add("training.brains.structural.anti_absence_brain", "StructuralAntiAbsenceBrain")
-    try:
-        from training.brains.heuristic.heuristic_brains import build_heuristic_brains
-
 
     try:
         from training.brains.heuristic.heuristic_brains import build_heuristic_brains
+
         for brain in build_heuristic_brains(conn):
             _register(brain)
     except Exception:
@@ -367,15 +366,15 @@ def get_profile_weights(perfil: str) -> Tuple[float, float, float, float, float]
         # confia mais na memória 14/15, mas mantém proteção
         return (0.50, 0.12, 0.25, 0.05, 0.08)
     # balanceado
+    if perfil == "balanceado":
         return (0.45, 0.22, 0.10, 0.13, 0.10)
-    if perfil == "agressivo":
-        return (0.50, 0.12, 0.25, 0.05, 0.08)
+    # fallback
     return (0.50, 0.18, 0.15, 0.10, 0.07)
 
 
 def build_core_c(context: Dict[str, Any], janela: int = 120) -> List[int]:
     historico = context.get("historico_recente") or []
-    recent = historico[-int(janela) :] if historico else []
+    recent = historico[-int(janela):] if historico else []
     coocc: Dict[Tuple[int, int], int] = {}
     for jogo in recent:
         for i in range(len(jogo)):
@@ -419,7 +418,6 @@ def passa_RAN(
     return ran_penalty(jogo, core_a, core_b, core_c) < float(limiar)
 
 
-def compactar_por_custo(
 def compact_game(
     jogo: List[int],
     target_size: int,
@@ -431,7 +429,7 @@ def compact_game(
 ) -> List[int]:
     jogo_atual = sorted(set(jogo))
     while len(jogo_atual) > target_size:
-        costs = []
+        costs: List[Tuple[float, int]] = []
         for d in jogo_atual:
             in_a = 1.0 if d in core_a else 0.0
             in_b = 0.8 if d in core_b else 0.0
@@ -449,6 +447,21 @@ def compact_game(
         _, remove_d = costs[0]
         jogo_atual.remove(remove_d)
     return sorted(jogo_atual)
+
+
+def compactar_por_custo(
+    jogo: List[int],
+    target_size: int,
+    core_a: List[int],
+    core_b: List[int],
+    core_c: List[int],
+    freq: Dict[int, int],
+    pair_scores: Dict[Tuple[int, int], int],
+) -> List[int]:
+    """
+    Wrapper mantido por compatibilidade (mesma ideia do compact_game).
+    """
+    return compact_game(jogo, target_size, core_a, core_b, core_c, freq, pair_scores)
 
 
 # ==========================
@@ -482,9 +495,11 @@ def generate_for_size(
     context = build_context(conn, concurso_n=ultimo_concurso, janela_recente=janela)
     freq = context.get("freq_recente", {}) or {}
     memoria_1415 = fetch_memoria_top(conn, min_pontos=14, limit=500)
+
     core_a = [6, 7, 12, 18, 23]
     core_b = [1, 4, 5, 9, 13, 17, 20, 21, 22, 25]
     core_c = build_core_c(context, janela=120)
+
     pair_scores: Dict[Tuple[int, int], int] = {}
     historico = context.get("historico_recente") or []
     for jogo_hist in historico[-120:]:
@@ -503,7 +518,7 @@ def generate_for_size(
         consensus_bonus=consensus_bonus,
         consensus_min_votes=consensus_min_votes,
     )
-    hub = BrainHub(conn, exploration_rate=exploration_rate, max_brain_share=max_brain_share)
+
     loaded = register_brains_auto(conn, hub)
     if not loaded:
         raise RuntimeError("Nenhum cérebro foi carregado. Verifique seus arquivos em training/brains.")
@@ -521,42 +536,41 @@ def generate_for_size(
 
     w_hub, w_freq, w_mem, w_shape, w_ran = get_profile_weights(perfil)
 
+    # Para bônus de “ensemble” (mesmo jogo aparecendo em múltiplos cérebros)
     jogo_counts: Dict[Tuple[int, ...], int] = {}
-    brain_dist_pos_quota = Counter(c["brain_id"] for c in candidatos)
+    brain_dist_pos_quota = Counter(c.get("brain_id", "unknown") for c in candidatos)
+
     compacted_candidates = 0
     for c in candidatos:
         jogo_raw = tuple(sorted(int(x) for x in c["jogo"]))
         if base_size != size:
-            jogo_raw = tuple(
-                compactar_por_custo(list(jogo_raw), size, core_a, core_b, core_c, freq, pair_scores)
-            )
+            jogo_raw = tuple(compactar_por_custo(list(jogo_raw), size, core_a, core_b, core_c, freq, pair_scores))
             compacted_candidates += 1
-    for c in candidatos:
-        jogo_raw = tuple(sorted(int(x) for x in c["jogo"]))
-        if base_size != size:
-            jogo_raw = tuple(compact_game(list(jogo_raw), size, core_a, core_b, core_c, freq, pair_scores))
         jogo_counts[jogo_raw] = jogo_counts.get(jogo_raw, 0) + 1
 
     ranked: List[Dict[str, Any]] = []
     ran_cortados = 0
+
     for c in candidatos:
         jogo = [int(x) for x in c["jogo"]]
         if base_size != size:
+            # Mantém a mesma “linha” do código original (as duas chamadas)
             jogo = compactar_por_custo(jogo, size, core_a, core_b, core_c, freq, pair_scores)
             jogo = compact_game(jogo, size, core_a, core_b, core_c, freq, pair_scores)
+
         s_hub = float(c.get("score", 0.0))
         s_freq = score_freq_recente(jogo, freq)
         s_mem = score_memoria(jogo, memoria_1415)
         s_shape = score_shape(jogo, size)
         s_ran = ran_penalty(jogo, core_a, core_b, core_c)
+
         if ran_strict and not passa_RAN(jogo, core_a, core_b, core_c):
             ran_cortados += 1
         if ran_strict and s_ran >= 0.6:
             continue
+
         jogo_key = tuple(sorted(jogo))
-        bonus = 0.0
-        if jogo_counts.get(jogo_key, 0) >= 2:
-            bonus = float(ensemble_bonus)
+        bonus = float(ensemble_bonus) if jogo_counts.get(jogo_key, 0) >= 2 else 0.0
 
         score_final = (
             (w_hub * s_hub)
@@ -567,21 +581,24 @@ def generate_for_size(
             + bonus
         )
 
-        ranked.append({
-            "jogo": sorted(jogo),
-            "score_final": float(score_final),
-            "score_hub": float(s_hub),
-            "score_freq": float(s_freq),
-            "score_mem": float(s_mem),
-            "score_shape": float(s_shape),
-            "score_ran": float(s_ran),
-            "score_ensemble": float(bonus),
-            "brain_id": str(c.get("brain_id", "unknown")),
-        })
+        ranked.append(
+            {
+                "jogo": sorted(jogo),
+                "score_final": float(score_final),
+                "score_hub": float(s_hub),
+                "score_freq": float(s_freq),
+                "score_mem": float(s_mem),
+                "score_shape": float(s_shape),
+                "score_ran": float(s_ran),
+                "score_ensemble": float(bonus),
+                "brain_id": str(c.get("brain_id", "unknown")),
+            }
+        )
 
     ranked.sort(key=lambda x: x["score_final"], reverse=True)
     final = diversify_ranked(ranked, top_k=qtd, max_sim=max_sim)
     strongest = ranked[: max(0, int(qtd_strong))]
+
     compacted_15 = 0
     if base_size != size and size == 15:
         compacted_15 = len(final)
@@ -609,9 +626,7 @@ def generate_for_size(
     if quota_enabled:
         lines.append(f"Quota ativa: max_per_brain={quota_max_per_brain}")
     if consensus_enabled:
-        lines.append(
-            f"Consenso ativo: bonus={consensus_bonus} min_votos={consensus_min_votes}"
-        )
+        lines.append(f"Consenso ativo: bonus={consensus_bonus} min_votos={consensus_min_votes}")
     if strongest:
         lines.append(f"Jogos fortes extras: {len(strongest)}")
     lines.append("=========================================\n")
@@ -652,6 +667,7 @@ def generate_for_size(
     lines.append("")
 
     out_path.write_text("\n".join(lines), encoding="utf-8")
+
     meta_path = reports_dir / f"proximo_concurso_{proximo_concurso}_jogos_{size}_meta.json"
     meta_payload = {
         "timestamp": now_str(),
@@ -759,6 +775,7 @@ def main() -> None:
         size = int(args.size)
         if size not in (15, 16, 18, 19):
             size = 15
+
         base_size = int(args.base_size) if args.base_size is not None else size
         if base_size not in (15, 16, 18, 19):
             base_size = size
@@ -790,6 +807,7 @@ def main() -> None:
             second_size = int(args.second_size)
             if second_size not in (15, 16, 18, 19):
                 second_size = 18
+
             generate_for_size(
                 conn=conn,
                 size=second_size,
@@ -812,7 +830,6 @@ def main() -> None:
                 consensus_bonus=float(args.consensus_bonus),
                 consensus_min_votes=max(2, int(args.consensus_min_votes)),
             )
-
     finally:
         try:
             conn.close()

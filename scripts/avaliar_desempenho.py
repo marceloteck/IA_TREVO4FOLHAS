@@ -7,7 +7,7 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 import sys
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -23,6 +23,7 @@ from training.trainer_v2 import (
     _instantiate_brain,
     _rank_and_select,
 )
+
 from training.brains.statistical.freq_global_brain import StatFreqGlobalBrain
 from training.brains.statistical.freq_recente_brain import StatFreqRecenteBrain
 from training.brains.temporal.atraso_brain import TemporalAtrasoBrain
@@ -49,7 +50,7 @@ class ResultadoTipo:
         self.total += 1
         self.soma_acertos += acertos
         self.melhor = max(self.melhor, acertos)
-        self.contagens[acertos] += 1
+        self.contagens[int(acertos)] += 1
 
     def media(self) -> float:
         if self.total == 0:
@@ -75,18 +76,21 @@ def build_hub(
     consensus_enabled: bool,
     consensus_bonus: float,
     consensus_min_votes: int,
+    heuristic_limit: Optional[int],
+    disable_heuristics: bool,
+    disable_structural: bool,
 ) -> BrainHub:
     hub = BrainHub(
         conn,
-        exploration_rate=exploration_rate,
-        quota_enabled=quota_enabled,
-        quota_max_per_brain=quota_max_per_brain,
-        consensus_enabled=consensus_enabled,
-        consensus_bonus=consensus_bonus,
-        consensus_min_votes=consensus_min_votes,
+        exploration_rate=float(exploration_rate),
+        quota_enabled=bool(quota_enabled),
+        quota_max_per_brain=int(quota_max_per_brain),
+        consensus_enabled=bool(consensus_enabled),
+        consensus_bonus=float(consensus_bonus),
+        consensus_min_votes=int(consensus_min_votes),
     )
-def build_hub(conn, exploration_rate: float) -> BrainHub:
-    hub = BrainHub(conn, exploration_rate=exploration_rate)
+
+    # Base
     hub.register(_instantiate_brain(StatFreqGlobalBrain, conn))
     hub.register(_instantiate_brain(StatFreqRecenteBrain, conn, janela=120))
     hub.register(_instantiate_brain(TemporalAtrasoBrain, conn))
@@ -94,9 +98,19 @@ def build_hub(conn, exploration_rate: float) -> BrainHub:
     hub.register(_instantiate_brain(ExplorTotalDezenasAutoBrain, conn))
     hub.register(_instantiate_brain(StatEliteMemoryBrain, conn))
     hub.register(_instantiate_brain(StatParidadeFaixasBrain, conn))
-    hub.register(_instantiate_brain(StructuralPatternShapeBrain, conn))
-    for brain in build_heuristic_brains(conn):
-        hub.register(brain)
+
+    # Structural (opcional)
+    if not disable_structural:
+        hub.register(_instantiate_brain(StructuralPatternShapeBrain, conn))
+
+    # Heuristics (opcional)
+    if not disable_heuristics:
+        heuristics = build_heuristic_brains(conn)
+        if heuristic_limit is not None and int(heuristic_limit) >= 0:
+            heuristics = heuristics[: int(heuristic_limit)]
+        for brain in heuristics:
+            hub.register(brain)
+
     hub.load_all()
     return hub
 
@@ -110,11 +124,11 @@ def selecionar_concursos(
     if not concursos:
         return []
     if inicio is not None:
-        concursos = [c for c in concursos if c >= inicio]
+        concursos = [c for c in concursos if c >= int(inicio)]
     if fim is not None:
-        concursos = [c for c in concursos if c <= fim]
-    if max_concursos > 0 and len(concursos) > max_concursos:
-        concursos = concursos[-max_concursos:]
+        concursos = [c for c in concursos if c <= int(fim)]
+    if max_concursos > 0 and len(concursos) > int(max_concursos):
+        concursos = concursos[-int(max_concursos):]
     return concursos
 
 
@@ -149,6 +163,9 @@ def avaliar(
     consensus_enabled: bool,
     consensus_bonus: float,
     consensus_min_votes: int,
+    heuristic_limit: Optional[int],
+    disable_heuristics: bool,
+    disable_structural: bool,
 ) -> Dict[str, Any]:
     resultados = {15: ResultadoTipo(), 18: ResultadoTipo()}
     distribuicao = {15: Counter(), 18: Counter()}
@@ -156,15 +173,17 @@ def avaliar(
     brains_stats = _brain_metrics()
 
     hub = build_hub(
-        conn,
+        conn=conn,
         exploration_rate=exploration_rate,
         quota_enabled=quota_enabled,
         quota_max_per_brain=quota_max_per_brain,
         consensus_enabled=consensus_enabled,
         consensus_bonus=consensus_bonus,
         consensus_min_votes=consensus_min_votes,
+        heuristic_limit=heuristic_limit,
+        disable_heuristics=disable_heuristics,
+        disable_structural=disable_structural,
     )
-    hub = build_hub(conn, exploration_rate=exploration_rate)
 
     for concurso_n in concursos:
         resultado_n1 = _fetch_result(conn, concurso_n + 1)
@@ -176,39 +195,46 @@ def avaliar(
         for tamanho in (15, 18):
             candidatos = hub.generate_games(
                 context=context,
-                size=tamanho,
-                per_brain=candidatos_por_cerebro,
-                top_n=top_n,
+                size=int(tamanho),
+                per_brain=int(candidatos_por_cerebro),
+                top_n=int(top_n),
             )
+
             for item in candidatos:
                 key = "generated_15" if tamanho == 15 else "generated_18"
-                brains_stats[item["brain_id"]][key] += 1
+                brains_stats[str(item.get("brain_id", "unknown"))][key] += 1
 
             avaliados = _rank_and_select(candidatos, resultado_n1, avaliar_top_k, tipo=tamanho)
             if not avaliados:
                 continue
+
             melhor = avaliados[0]
             acertos = int(melhor["acertos"])
+
             resultados[tamanho].registrar(acertos)
             distribuicao[tamanho][acertos] += 1
-            brains_rank[str(melhor["brain_id"])] += 1
+
+            melhor_brain = str(melhor.get("brain_id", "unknown"))
+            brains_rank[melhor_brain] += 1
+
             top_key = "top1_15" if tamanho == 15 else "top1_18"
-            brains_stats[melhor["brain_id"]][top_key] += 1
+            brains_stats[melhor_brain][top_key] += 1
 
             for item in avaliados:
                 acertos_item = int(item["acertos"])
+                brain_id = str(item.get("brain_id", "unknown"))
                 if tamanho == 15:
-                    brains_stats[item["brain_id"]]["topk_sum_15"] += acertos_item
-                    brains_stats[item["brain_id"]]["topk_count_15"] += 1
-                    brains_stats[item["brain_id"]]["topk_best_15"] = max(
-                        brains_stats[item["brain_id"]]["topk_best_15"],
+                    brains_stats[brain_id]["topk_sum_15"] += acertos_item
+                    brains_stats[brain_id]["topk_count_15"] += 1
+                    brains_stats[brain_id]["topk_best_15"] = max(
+                        brains_stats[brain_id]["topk_best_15"],
                         acertos_item,
                     )
                 else:
-                    brains_stats[item["brain_id"]]["topk_sum_18"] += acertos_item
-                    brains_stats[item["brain_id"]]["topk_count_18"] += 1
-                    brains_stats[item["brain_id"]]["topk_best_18"] = max(
-                        brains_stats[item["brain_id"]]["topk_best_18"],
+                    brains_stats[brain_id]["topk_sum_18"] += acertos_item
+                    brains_stats[brain_id]["topk_count_18"] += 1
+                    brains_stats[brain_id]["topk_best_18"] = max(
+                        brains_stats[brain_id]["topk_best_18"],
                         acertos_item,
                     )
 
@@ -223,7 +249,7 @@ def avaliar(
                         brain_id=item["brain_id"],
                     )
 
-    resumo = {}
+    resumo: Dict[int, Dict[str, Any]] = {}
     for tamanho, data in resultados.items():
         quase_acertos = sum(v for k, v in data.contagens.items() if 11 <= k <= 13)
         foco_14_15 = sum(v for k, v in data.contagens.items() if k >= 14)
@@ -241,18 +267,10 @@ def avaliar(
             "q15+": sum(v for k, v in data.contagens.items() if k >= 15),
         }
 
-    brains_output = {}
+    brains_output: Dict[str, Dict[str, Any]] = {}
     for brain_id, stats in brains_stats.items():
-        avg_15 = (
-            stats["topk_sum_15"] / stats["topk_count_15"]
-            if stats["topk_count_15"] > 0
-            else 0.0
-        )
-        avg_18 = (
-            stats["topk_sum_18"] / stats["topk_count_18"]
-            if stats["topk_count_18"] > 0
-            else 0.0
-        )
+        avg_15 = (stats["topk_sum_15"] / stats["topk_count_15"]) if stats["topk_count_15"] > 0 else 0.0
+        avg_18 = (stats["topk_sum_18"] / stats["topk_count_18"]) if stats["topk_count_18"] > 0 else 0.0
         brains_output[brain_id] = {
             "generated_15": stats["generated_15"],
             "generated_18": stats["generated_18"],
@@ -266,20 +284,29 @@ def avaliar(
 
     return {
         "timestamp": now_str(),
-        "janela": janela,
-        "candidatos_por_cerebro": candidatos_por_cerebro,
-        "top_n": top_n,
-        "avaliar_top_k": avaliar_top_k,
-        "exploration_rate": exploration_rate,
-        "quota_enabled": quota_enabled,
-        "quota_max_per_brain": quota_max_per_brain,
-        "consensus_enabled": consensus_enabled,
-        "consensus_bonus": consensus_bonus,
-        "consensus_min_votes": consensus_min_votes,
-        "simular_aprendizado": simular_aprendizado,
+        "janela": int(janela),
+        "candidatos_por_cerebro": int(candidatos_por_cerebro),
+        "top_n": int(top_n),
+        "avaliar_top_k": int(avaliar_top_k),
+        "exploration_rate": float(exploration_rate),
+        "quota_enabled": bool(quota_enabled),
+        "quota_max_per_brain": int(quota_max_per_brain),
+        "consensus_enabled": bool(consensus_enabled),
+        "consensus_bonus": float(consensus_bonus),
+        "consensus_min_votes": int(consensus_min_votes),
+        "heuristic_limit": heuristic_limit,
+        "disable_heuristics": bool(disable_heuristics),
+        "disable_structural": bool(disable_structural),
+        "simular_aprendizado": bool(simular_aprendizado),
         "resumo": resumo,
         "brains_top1": dict(sorted(brains_rank.items(), key=lambda x: x[1], reverse=True)),
-        "brains": dict(sorted(brains_output.items(), key=lambda x: x[1]["top1_15"] + x[1]["top1_18"], reverse=True)),
+        "brains": dict(
+            sorted(
+                brains_output.items(),
+                key=lambda x: x[1]["top1_15"] + x[1]["top1_18"],
+                reverse=True,
+            )
+        ),
     }
 
 
@@ -300,6 +327,22 @@ def main() -> None:
     parser.add_argument("--consensus-bonus", type=float, default=0.02, help="Bônus por consenso de candidatos.")
     parser.add_argument("--consensus-min-votes", type=int, default=2, help="Mínimo de votos para bônus de consenso.")
     parser.add_argument(
+        "--heuristic-limit",
+        type=int,
+        default=None,
+        help="Limitar quantidade de cérebros heurísticos usados na avaliação.",
+    )
+    parser.add_argument(
+        "--disable-heuristics",
+        action="store_true",
+        help="Desativar cérebros heurísticos para reduzir custo da avaliação.",
+    )
+    parser.add_argument(
+        "--disable-structural",
+        action="store_true",
+        help="Desativar cérebros estruturais para reduzir custo da avaliação.",
+    )
+    parser.add_argument(
         "--simular-aprendizado",
         action="store_true",
         help="Executa aprendizado em um banco temporário para medir efeito incremental.",
@@ -313,6 +356,7 @@ def main() -> None:
 
     args = parser.parse_args()
 
+    # Resolve DB base path (sem duplicidade)
     if args.db_path:
         base_path = Path(args.db_path)
     else:
@@ -321,6 +365,7 @@ def main() -> None:
         base_path = Path(db_info[2]) if db_info and db_info[2] else Path("data/BD/lotofacil.db")
         base_conn.close()
 
+    # DB de simulação (backup)
     if args.simular_aprendizado:
         tmp_path = Path("reports") / f"lotofacil_tmp_{int(datetime.now().timestamp())}.db"
         clone_db(base_path, tmp_path)
@@ -328,35 +373,44 @@ def main() -> None:
     else:
         conn = get_conn(str(base_path) if args.db_path else None)
 
-    concursos = _fetch_all_concursos(conn)
-    if len(concursos) < 2:
-        raise SystemExit("Banco possui poucos concursos para avaliação.")
+    try:
+        concursos = _fetch_all_concursos(conn)
+        if len(concursos) < 2:
+            raise SystemExit("Banco possui poucos concursos para avaliação.")
 
-    concursos = concursos[:-1]
-    concursos = selecionar_concursos(concursos, args.inicio, args.fim, args.max_concursos)
+        concursos = concursos[:-1]  # não avalia o último (sem N+1)
+        concursos = selecionar_concursos(concursos, args.inicio, args.fim, args.max_concursos)
 
-    resultado = avaliar(
-        conn=conn,
-        janela=args.janela,
-        candidatos_por_cerebro=args.candidatos,
-        top_n=args.top_n,
-        avaliar_top_k=args.avaliar_top_k,
-        exploration_rate=args.exploration_rate,
-        simular_aprendizado=args.simular_aprendizado,
-        concursos=concursos,
-        quota_enabled=args.quota_enabled,
-        quota_max_per_brain=max(0, int(args.quota_max_per_brain)),
-        consensus_enabled=args.consensus_enabled,
-        consensus_bonus=float(args.consensus_bonus),
-        consensus_min_votes=max(2, int(args.consensus_min_votes)),
-    )
+        resultado = avaliar(
+            conn=conn,
+            janela=args.janela,
+            candidatos_por_cerebro=args.candidatos,
+            top_n=args.top_n,
+            avaliar_top_k=args.avaliar_top_k,
+            exploration_rate=args.exploration_rate,
+            simular_aprendizado=args.simular_aprendizado,
+            concursos=concursos,
+            quota_enabled=args.quota_enabled,
+            quota_max_per_brain=max(0, int(args.quota_max_per_brain)),
+            consensus_enabled=args.consensus_enabled,
+            consensus_bonus=float(args.consensus_bonus),
+            consensus_min_votes=max(2, int(args.consensus_min_votes)),
+            heuristic_limit=args.heuristic_limit,
+            disable_heuristics=args.disable_heuristics,
+            disable_structural=args.disable_structural,
+        )
 
-    print(json.dumps(resultado, indent=2, ensure_ascii=False))
+        print(json.dumps(resultado, indent=2, ensure_ascii=False))
 
-    if args.salvar_relatorio:
-        path = Path(args.salvar_relatorio)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(resultado, indent=2, ensure_ascii=False), encoding="utf-8")
+        if args.salvar_relatorio:
+            path = Path(args.salvar_relatorio)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(resultado, indent=2, ensure_ascii=False), encoding="utf-8")
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":
