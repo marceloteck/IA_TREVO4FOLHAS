@@ -1,0 +1,109 @@
+name: Relatorio de Avaliacao Manual
+
+on:
+  workflow_dispatch:
+    inputs:
+      janela:
+        description: "Janela de historico recente"
+        required: true
+        default: "300"
+      candidatos_15:
+        description: "Candidatos por cerebro (15 dezenas)"
+        required: true
+        default: "120"
+      candidatos_18:
+        description: "Candidatos por cerebro (18 dezenas)"
+        required: true
+        default: "80"
+      top_n:
+        description: "Top N por tamanho"
+        required: true
+        default: "60"
+      avaliar_top_k_15:
+        description: "Quantos candidatos avaliar (15 dezenas)"
+        required: true
+        default: "60"
+      avaliar_top_k_18:
+        description: "Quantos candidatos avaliar (18 dezenas)"
+        required: true
+        default: "40"
+      max_concursos:
+        description: "Avalia os ultimos N concursos"
+        required: true
+        default: "200"
+      exploration_rate_15:
+        description: "Taxa de exploracao do BrainHub (15 dezenas)"
+        required: true
+        default: "0.12"
+      exploration_rate_18:
+        description: "Taxa de exploracao do BrainHub (18 dezenas)"
+        required: true
+        default: "0.08"
+      simular_aprendizado:
+        description: "Simular aprendizado (true/false)"
+        required: true
+        default: "true"
+
+jobs:
+  relatorio:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Start DB (schema + import CSV)
+        run: |
+          python START/startBD.py
+
+      - name: Gerar relatorio de avaliacao
+        shell: bash
+        run: |
+          export PYTHONPATH="${PYTHONPATH:-.}"
+          JANELA="${{ github.event.inputs.janela || '300' }}"
+          TOP_N="${{ github.event.inputs.top_n || '60' }}"
+          MAX_CONCURSOS="${{ github.event.inputs.max_concursos || '200' }}"
+          SIMULAR="${{ github.event.inputs.simular_aprendizado || 'true' }}"
+
+          CANDIDATOS_15="${{ github.event.inputs.candidatos_15 || '120' }}"
+          AVALIAR_TOP_K_15="${{ github.event.inputs.avaliar_top_k_15 || '60' }}"
+          EXPLORATION_15="${{ github.event.inputs.exploration_rate_15 || '0.12' }}"
+
+          CANDIDATOS_18="${{ github.event.inputs.candidatos_18 || '80' }}"
+          AVALIAR_TOP_K_18="${{ github.event.inputs.avaliar_top_k_18 || '40' }}"
+          EXPLORATION_18="${{ github.event.inputs.exploration_rate_18 || '0.08' }}"
+
+          CMD_15="python scripts/avaliar_desempenho.py --janela ${JANELA} --candidatos ${CANDIDATOS_15} --top-n ${TOP_N} --avaliar-top-k ${AVALIAR_TOP_K_15} --max-concursos ${MAX_CONCURSOS} --exploration-rate ${EXPLORATION_15} --salvar-relatorio reports/relatorio_avaliacao_15.json"
+          CMD_18="python scripts/avaliar_desempenho.py --janela ${JANELA} --candidatos ${CANDIDATOS_18} --top-n ${TOP_N} --avaliar-top-k ${AVALIAR_TOP_K_18} --max-concursos ${MAX_CONCURSOS} --exploration-rate ${EXPLORATION_18} --salvar-relatorio reports/relatorio_avaliacao_18.json"
+          if [ "${SIMULAR}" = "true" ]; then
+            CMD_15="${CMD_15} --simular-aprendizado"
+            CMD_18="${CMD_18} --simular-aprendizado"
+          fi
+          echo "Running: ${CMD_15}"
+          ${CMD_15}
+          echo "Running: ${CMD_18}"
+          ${CMD_18}
+
+      - name: Gerar dashboard HTML
+        run: |
+          python scripts/gerar_dashboard_html.py
+
+      - name: Upload relatorio
+        uses: actions/upload-artifact@v4
+        with:
+          name: relatorio-avaliacao
+          path: |
+            reports/relatorio_avaliacao_15.json
+            reports/relatorio_avaliacao_18.json
+            reports/dashboard.html
