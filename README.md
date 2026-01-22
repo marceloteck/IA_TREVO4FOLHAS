@@ -75,4 +75,42 @@ python START/relatorio_aprendizado.py
 
 ---
 
+## 🌐 DASHBOARD WEB
+
+Para iniciar o painel web localmente:
+
+```bash
+python -m src.web_dashboard
+```
+
+O painel ficará disponível em `http://localhost:5000`.
+
+### Executar via Windows (.bat)
+
+```bat
+start_dashboard.bat
+```
+
+### Alterar host/porta
+
+Defina as variáveis de ambiente `HOST` e `PORT` antes de iniciar. Exemplos:
+
+```bash
+HOST=127.0.0.1 PORT=8000 python -m src.web_dashboard
+```
+
+```bat
+set HOST=127.0.0.1
+set PORT=8000
+start_dashboard.bat
+```
+
+### Acesso online
+
+Para expor o painel em rede, use um host acessível (ex: `0.0.0.0`) e libere a porta
+no firewall/roteador ou use um túnel (ex: Cloudflare Tunnel, Ngrok). Em produção,
+considere rodar atrás de um servidor WSGI (Gunicorn/Waitress) e configurar HTTPS.
+
+--- 
+
 ⚠️ AVISO: Este software é uma ferramenta de estudo estatístico. Não garante lucros ou prêmios. O uso é de total responsabilidade do usuário.
