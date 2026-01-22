@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>IA Trevo4Folhas — Dashboard</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #0b0f1a;
+        --card: #141a2a;
+        --muted: #94a3b8;
+        --accent: #22c55e;
+        --accent-2: #38bdf8;
+        --danger: #f97316;
+        --border: #1f2a44;
+      }
+      * {
+        box-sizing: border-box;
+        font-family: "Inter", "Segoe UI", sans-serif;
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: #e2e8f0;
+      }
+      header {
+        padding: 24px 32px;
+        border-bottom: 1px solid var(--border);
+        background: linear-gradient(120deg, #0b1224 0%, #111a33 100%);
+      }
+      header h1 {
+        margin: 0;
+        font-size: 22px;
+      }
+      header p {
+        margin: 6px 0 0;
+        color: var(--muted);
+      }
+      main {
+        padding: 24px 32px 48px;
+        display: grid;
+        gap: 24px;
+      }
+      .grid {
+        display: grid;
+        gap: 20px;
+        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      }
+      .card {
+        background: var(--card);
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        padding: 18px;
+        box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
+      }
+      .card h3 {
+        margin: 0 0 12px;
+        font-size: 16px;
+      }
+      .badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 12px;
+        padding: 4px 10px;
+        border-radius: 999px;
+        background: rgba(34, 197, 94, 0.15);
+        color: var(--accent);
+        border: 1px solid rgba(34, 197, 94, 0.4);
+      }
+      .badge.orange {
+        background: rgba(249, 115, 22, 0.15);
+        color: var(--danger);
+        border-color: rgba(249, 115, 22, 0.4);
+      }
+      .badge.blue {
+        background: rgba(56, 189, 248, 0.15);
+        color: var(--accent-2);
+        border-color: rgba(56, 189, 248, 0.4);
+      }
+      .metrics {
+        display: grid;
+        gap: 12px;
+      }
+      .metric {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 8px 12px;
+        border-radius: 10px;
+        background: rgba(15, 23, 42, 0.7);
+      }
+      .metric span {
+        color: var(--muted);
+      }
+      form {
+        display: grid;
+        gap: 12px;
+      }
+      label {
+        font-size: 12px;
+        color: var(--muted);
+      }
+      input,
+      select {
+        width: 100%;
+        padding: 10px 12px;
+        border-radius: 10px;
+        border: 1px solid var(--border);
+        background: #0f172a;
+        color: #e2e8f0;
+      }
+      button {
+        padding: 10px 14px;
+        border-radius: 10px;
+        border: none;
+        background: var(--accent);
+        color: #04110a;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      button.secondary {
+        background: transparent;
+        color: var(--accent-2);
+        border: 1px solid var(--accent-2);
+      }
+      .row {
+        display: grid;
+        gap: 12px;
+        grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+      }
+      .muted {
+        color: var(--muted);
+        font-size: 12px;
+      }
+      .list {
+        list-style: none;
+        padding: 0;
+        margin: 0;
+      }
+      .list li {
+        padding: 6px 0;
+        border-bottom: 1px solid rgba(148, 163, 184, 0.15);
+        font-size: 13px;
+        color: var(--muted);
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>IA Trevo4Folhas — Console de Operações</h1>
+      <p>Monitoramento de desempenho e controle de treinamento com foco em 14/15 pontos.</p>
+    </header>
+    <main>
+      <section class="grid">
+        <div class="card">
+          <h3>Relatório 15 dezenas</h3>
+          {% if relatorio_15 %}
+          <div class="metrics">
+            <div class="metric"><span>Média de acertos</span><strong>{{ relatorio_15.resumo["15"].media_acertos }}</strong></div>
+            <div class="metric"><span>Melhor resultado</span><strong>{{ relatorio_15.resumo["15"].melhor }}</strong></div>
+            <div class="metric"><span>Quase acertos (11-13)</span><strong>{{ relatorio_15.resumo["15"].quase_acertos_11_13 }}</strong></div>
+            <div class="metric"><span>Foco 14/15</span><strong>{{ relatorio_15.resumo["15"].foco_14_15 }}</strong></div>
+          </div>
+          <p class="muted">Atualizado em {{ relatorio_15.timestamp }}</p>
+          {% else %}
+          <p class="muted">Nenhum relatório disponível.</p>
+          {% endif %}
+        </div>
+        <div class="card">
+          <h3>Relatório 18 dezenas</h3>
+          {% if relatorio_18 %}
+          <div class="metrics">
+            <div class="metric"><span>Média de acertos</span><strong>{{ relatorio_18.resumo["18"].media_acertos }}</strong></div>
+            <div class="metric"><span>Melhor resultado</span><strong>{{ relatorio_18.resumo["18"].melhor }}</strong></div>
+            <div class="metric"><span>Quase acertos (11-13)</span><strong>{{ relatorio_18.resumo["18"].quase_acertos_11_13 }}</strong></div>
+            <div class="metric"><span>Foco 14/15</span><strong>{{ relatorio_18.resumo["18"].foco_14_15 }}</strong></div>
+          </div>
+          <p class="muted">Atualizado em {{ relatorio_18.timestamp }}</p>
+          {% else %}
+          <p class="muted">Nenhum relatório disponível.</p>
+          {% endif %}
+        </div>
+        <div class="card">
+          <h3>Status das tarefas</h3>
+          <ul class="list">
+            <li><strong>Avaliação:</strong> {{ tasks["avaliacao"].status }} — {{ tasks["avaliacao"].last_message }}</li>
+            <li><strong>Treino:</strong> {{ tasks["treino"].status }} — {{ tasks["treino"].last_message }}</li>
+          </ul>
+          <p class="muted">Logs em /reports/*.log</p>
+        </div>
+      </section>
+
+      <section class="grid">
+        <div class="card">
+          <h3>Top cérebros (15 dezenas)</h3>
+          {% if relatorio_15 and relatorio_15.brains %}
+          <ul class="list">
+            {% for brain_id, info in relatorio_15.brains.items() %}
+            {% if loop.index <= 8 %}
+            <li>
+              <strong>{{ brain_id }}</strong> — Top1: {{ info.top1_15 }} | Gerados: {{ info.generated_15 }} | Média acertos (topK): {{ info.avg_acertos_topk_15 }}
+            </li>
+            {% endif %}
+            {% endfor %}
+          </ul>
+          {% else %}
+          <p class="muted">Sem dados de cérebros.</p>
+          {% endif %}
+        </div>
+        <div class="card">
+          <h3>Top cérebros (18 dezenas)</h3>
+          {% if relatorio_18 and relatorio_18.brains %}
+          <ul class="list">
+            {% for brain_id, info in relatorio_18.brains.items() %}
+            {% if loop.index <= 8 %}
+            <li>
+              <strong>{{ brain_id }}</strong> — Top1: {{ info.top1_18 }} | Gerados: {{ info.generated_18 }} | Média acertos (topK): {{ info.avg_acertos_topk_18 }}
+            </li>
+            {% endif %}
+            {% endfor %}
+          </ul>
+          {% else %}
+          <p class="muted">Sem dados de cérebros.</p>
+          {% endif %}
+        </div>
+      </section>
+
+      <section class="grid">
+        <div class="card">
+          <h3>Executar avaliação (14/15 foco)</h3>
+          <form method="post" action="{{ url_for('avaliar') }}">
+            <div class="row">
+              <div>
+                <label>Janela</label>
+                <input type="number" name="janela" value="300" />
+              </div>
+              <div>
+                <label>Max concursos</label>
+                <input type="number" name="max_concursos" value="200" />
+              </div>
+              <div>
+                <label>Top N</label>
+                <input type="number" name="top_n" value="60" />
+              </div>
+            </div>
+            <div class="row">
+              <div>
+                <label>Candidatos (15)</label>
+                <input type="number" name="candidatos_15" value="120" />
+              </div>
+              <div>
+                <label>Avaliar Top K (15)</label>
+                <input type="number" name="avaliar_top_k_15" value="60" />
+              </div>
+              <div>
+                <label>Exploração (15)</label>
+                <input type="text" name="exploration_15" value="0.12" />
+              </div>
+            </div>
+            <div class="row">
+              <div>
+                <label>Candidatos (18)</label>
+                <input type="number" name="candidatos_18" value="80" />
+              </div>
+              <div>
+                <label>Avaliar Top K (18)</label>
+                <input type="number" name="avaliar_top_k_18" value="40" />
+              </div>
+              <div>
+                <label>Exploração (18)</label>
+                <input type="text" name="exploration_18" value="0.08" />
+              </div>
+            </div>
+            <div>
+              <label>Simular aprendizado</label>
+              <select name="simular_aprendizado">
+                <option value="true" selected>Sim</option>
+                <option value="false">Não</option>
+              </select>
+            </div>
+            <button type="submit">Rodar avaliação completa</button>
+          </form>
+        </div>
+        <div class="card">
+          <h3>Iniciar treino incremental</h3>
+          <form method="post" action="{{ url_for('treinar') }}">
+            <div class="row">
+              <div>
+                <label>Limite de concursos</label>
+                <input type="number" name="limite" placeholder="Ex: 50" />
+              </div>
+              <div>
+                <label>Dormir (min)</label>
+                <input type="number" name="sleep_min" value="30" />
+              </div>
+              <div>
+                <label>Loop contínuo</label>
+                <select name="loop">
+                  <option value="false" selected>Não</option>
+                  <option value="true">Sim</option>
+                </select>
+              </div>
+            </div>
+            <button type="submit" class="secondary">Iniciar treino</button>
+            <p class="muted">O treino executa o trainer_v2 no servidor atual.</p>
+          </form>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>

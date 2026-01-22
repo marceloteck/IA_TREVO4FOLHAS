@@ -1,0 +1,137 @@
+{
+  "timestamp": "2026-01-22 19:47:28",
+  "janela": 300,
+  "candidatos_por_cerebro": 120,
+  "top_n": 60,
+  "avaliar_top_k": 60,
+  "exploration_rate": 0.12,
+  "quota_enabled": true,
+  "quota_max_per_brain": 12,
+  "consensus_enabled": true,
+  "consensus_bonus": 0.02,
+  "consensus_min_votes": 2,
+  "heuristic_limit": null,
+  "disable_heuristics": true,
+  "disable_structural": true,
+  "simular_aprendizado": true,
+  "resumo": {
+    "15": {
+      "total": 200,
+      "media_acertos": 11.56,
+      "melhor": 14,
+      "contagens": {
+        "11": 95,
+        "13": 15,
+        "12": 84,
+        "14": 1,
+        "10": 5
+      },
+      "quase_acertos_11_13": 194,
+      "foco_14_15": 1,
+      "q11+": 195,
+      "q12+": 100,
+      "q13+": 16,
+      "q14+": 1,
+      "q15+": 0
+    },
+    "18": {
+      "total": 200,
+      "media_acertos": 13.28,
+      "melhor": 15,
+      "contagens": {
+        "13": 116,
+        "15": 6,
+        "14": 61,
+        "12": 17
+      },
+      "quase_acertos_11_13": 133,
+      "foco_14_15": 67,
+      "q11+": 200,
+      "q12+": 200,
+      "q13+": 183,
+      "q14+": 67,
+      "q15+": 6
+    }
+  },
+  "brains_top1": {
+    "stat_freq_recente_120": 76,
+    "stat_paridade_faixas": 71,
+    "stat_freq_global": 70,
+    "stat_elite_memory": 59,
+    "expl_total_dezenas_auto": 47,
+    "temporal_atraso": 43,
+    "stat_nucleo_satelites": 34
+  },
+  "brains": {
+    "stat_freq_recente_120": {
+      "generated_15": 1586,
+      "generated_18": 1372,
+      "top1_15": 23,
+      "top1_18": 53,
+      "avg_acertos_topk_15": 9.0107,
+      "avg_acertos_topk_18": 11.481,
+      "best_acertos_topk_15": 13,
+      "best_acertos_topk_18": 15
+    },
+    "stat_paridade_faixas": {
+      "generated_15": 844,
+      "generated_18": 2340,
+      "top1_15": 16,
+      "top1_18": 55,
+      "avg_acertos_topk_15": 8.9704,
+      "avg_acertos_topk_18": 10.7607,
+      "best_acertos_topk_15": 12,
+      "best_acertos_topk_18": 14
+    },
+    "stat_freq_global": {
+      "generated_15": 2015,
+      "generated_18": 1637,
+      "top1_15": 34,
+      "top1_18": 36,
+      "avg_acertos_topk_15": 8.9231,
+      "avg_acertos_topk_18": 10.9994,
+      "best_acertos_topk_15": 13,
+      "best_acertos_topk_18": 15
+    },
+    "stat_elite_memory": {
+      "generated_15": 1582,
+      "generated_18": 1079,
+      "top1_15": 41,
+      "top1_18": 18,
+      "avg_acertos_topk_15": 9.0379,
+      "avg_acertos_topk_18": 10.797,
+      "best_acertos_topk_15": 14,
+      "best_acertos_topk_18": 14
+    },
+    "expl_total_dezenas_auto": {
+      "generated_15": 2394,
+      "generated_18": 2008,
+      "top1_15": 29,
+      "top1_18": 18,
+      "avg_acertos_topk_15": 8.9541,
+      "avg_acertos_topk_18": 10.6738,
+      "best_acertos_topk_15": 13,
+      "best_acertos_topk_18": 14
+    },
+    "temporal_atraso": {
+      "generated_15": 2159,
+      "generated_18": 2388,
+      "top1_15": 37,
+      "top1_18": 6,
+      "avg_acertos_topk_15": 9.0009,
+      "avg_acertos_topk_18": 9.9971,
+      "best_acertos_topk_15": 13,
+      "best_acertos_topk_18": 14
+    },
+    "stat_nucleo_satelites": {
+      "generated_15": 1420,
+      "generated_18": 1176,
+      "top1_15": 20,
+      "top1_18": 14,
+      "avg_acertos_topk_15": 9.0317,
+      "avg_acertos_topk_18": 10.8002,
+      "best_acertos_topk_15": 13,
+      "best_acertos_topk_18": 14
+    }
+  }
+}

@@ -26,6 +26,9 @@ from training.brains.exploratory.total_dezenas_auto_brain import ExplorTotalDeze
 from training.brains.statistical.elite_memory_brain import StatEliteMemoryBrain
 from training.brains.statistical.paridade_faixas_brain import StatParidadeFaixasBrain
 from training.brains.structural.pattern_shape_brain import StructuralPatternShapeBrain
+from training.brains.heuristic.heuristic_brains import build_heuristic_brains
+from training.brains.structural.core_protect_brain import StructuralCoreProtectBrain
+from training.brains.structural.anti_absence_brain import StructuralAntiAbsenceBrain
 
 
 # ==========================
@@ -334,7 +337,17 @@ def _instantiate_brain(brain_cls, conn, **kwargs):
 # ==========================
 # TREINO (N -> N+1)
 # ==========================
-def treinar_pendencias(conn, limite_concursos: Optional[int] = None) -> Dict[str, Any]:
+def treinar_pendencias(
+    conn,
+    limite_concursos: Optional[int] = None,
+    exploration_rate: Optional[float] = None,
+    max_brain_share: Optional[float] = None,
+    quota_enabled: Optional[bool] = None,
+    quota_max_per_brain: Optional[int] = None,
+    consensus_enabled: Optional[bool] = None,
+    consensus_bonus: Optional[float] = None,
+    consensus_min_votes: Optional[int] = None,
+) -> Dict[str, Any]:
     concursos = _fetch_all_concursos(conn)
     if len(concursos) < 2:
         raise RuntimeError("❌ Banco tem poucos concursos. Rode START/startBD.py e/ou START/update_concursos.py.")
@@ -358,7 +371,23 @@ def treinar_pendencias(conn, limite_concursos: Optional[int] = None) -> Dict[str
     _log("=========================================")
 
     # BrainHub + brains
-    hub = BrainHub(conn)
+    hub_kwargs: Dict[str, float] = {}
+    if exploration_rate is not None:
+        hub_kwargs["exploration_rate"] = float(exploration_rate)
+    if max_brain_share is not None:
+        hub_kwargs["max_brain_share"] = float(max_brain_share)
+    if quota_enabled is not None:
+        hub_kwargs["quota_enabled"] = bool(quota_enabled)
+    if quota_max_per_brain is not None:
+        hub_kwargs["quota_max_per_brain"] = int(quota_max_per_brain)
+    if consensus_enabled is not None:
+        hub_kwargs["consensus_enabled"] = bool(consensus_enabled)
+    if consensus_bonus is not None:
+        hub_kwargs["consensus_bonus"] = float(consensus_bonus)
+    if consensus_min_votes is not None:
+        hub_kwargs["consensus_min_votes"] = int(consensus_min_votes)
+
+    hub = BrainHub(conn, **hub_kwargs)
 
     # IMPORTANTÍSSIMO: usamos instanciação adaptativa (não quebra por kwargs)
     hub.register(_instantiate_brain(StatFreqGlobalBrain, conn))
@@ -372,6 +401,10 @@ def treinar_pendencias(conn, limite_concursos: Optional[int] = None) -> Dict[str
     hub.register(_instantiate_brain(StatEliteMemoryBrain, conn))
     hub.register(_instantiate_brain(StatParidadeFaixasBrain, conn))
     hub.register(_instantiate_brain(StructuralPatternShapeBrain, conn))
+    hub.register(_instantiate_brain(StructuralCoreProtectBrain, conn))
+    hub.register(_instantiate_brain(StructuralAntiAbsenceBrain, conn))
+    for brain in build_heuristic_brains(conn):
+        hub.register(brain)
 
     hub.load_all()  # carrega estado persistido dos cérebros
 
@@ -508,7 +541,18 @@ def treinar_pendencias(conn, limite_concursos: Optional[int] = None) -> Dict[str
     return resumo
 
 
-def run(loop: bool, sleep_min: int, limite_concursos: Optional[int]) -> None:
+def run(
+    loop: bool,
+    sleep_min: int,
+    limite_concursos: Optional[int],
+    exploration_rate: Optional[float],
+    max_brain_share: Optional[float],
+    quota_enabled: Optional[bool],
+    quota_max_per_brain: Optional[int],
+    consensus_enabled: Optional[bool],
+    consensus_bonus: Optional[float],
+    consensus_min_votes: Optional[int],
+) -> None:
     """
     Modo 24/7:
     - roda treinos pendentes
@@ -517,7 +561,17 @@ def run(loop: bool, sleep_min: int, limite_concursos: Optional[int]) -> None:
     while True:
         conn = get_conn()
         try:
-            resumo = treinar_pendencias(conn, limite_concursos=limite_concursos)
+            resumo = treinar_pendencias(
+                conn,
+                limite_concursos=limite_concursos,
+                exploration_rate=exploration_rate,
+                max_brain_share=max_brain_share,
+                quota_enabled=quota_enabled,
+                quota_max_per_brain=quota_max_per_brain,
+                consensus_enabled=consensus_enabled,
+                consensus_bonus=consensus_bonus,
+                consensus_min_votes=consensus_min_votes,
+            )
         finally:
             try:
                 conn.close()
@@ -539,9 +593,27 @@ def main():
     parser.add_argument("--loop", action="store_true", help="Roda em loop (24/7), dormindo quando não houver novos concursos.")
     parser.add_argument("--sleep-min", type=int, default=30, help="Minutos para dormir quando não houver novos concursos (modo --loop).")
     parser.add_argument("--limite", type=int, default=None, help="Limitar quantos concursos treinar nesta execução (debug).")
+    parser.add_argument("--exploration-rate", type=float, default=None, help="Exploração do BrainHub (opcional).")
+    parser.add_argument("--max-brain-share", type=float, default=None, help="Limite por cérebro no BrainHub (opcional).")
+    parser.add_argument("--quota-enabled", action="store_true", help="Ativar quota por cérebro no Top N.")
+    parser.add_argument("--quota-max-per-brain", type=int, default=0, help="Limite absoluto por cérebro no Top N.")
+    parser.add_argument("--consensus-enabled", action="store_true", help="Ativar bônus por consenso entre cérebros.")
+    parser.add_argument("--consensus-bonus", type=float, default=0.02, help="Bônus por consenso de candidatos.")
+    parser.add_argument("--consensus-min-votes", type=int, default=2, help="Mínimo de votos para bônus de consenso.")
     args = parser.parse_args()
 
-    run(loop=bool(args.loop), sleep_min=int(args.sleep_min), limite_concursos=args.limite)
+    run(
+        loop=bool(args.loop),
+        sleep_min=int(args.sleep_min),
+        limite_concursos=args.limite,
+        exploration_rate=args.exploration_rate,
+        max_brain_share=args.max_brain_share,
+        quota_enabled=args.quota_enabled,
+        quota_max_per_brain=max(0, int(args.quota_max_per_brain)),
+        consensus_enabled=args.consensus_enabled,
+        consensus_bonus=float(args.consensus_bonus),
+        consensus_min_votes=max(2, int(args.consensus_min_votes)),
+    )
 
 
 if __name__ == "__main__":
