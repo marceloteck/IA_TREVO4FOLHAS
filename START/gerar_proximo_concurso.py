@@ -215,7 +215,6 @@ def insert_pred(
     dezenas_sorted = sorted(int(x) for x in dezenas)
     payload = dezenas_sorted + [None] * (18 - len(dezenas_sorted))
 
-    # Montagem segura (nunca mais quebra por contagem errada)
     cols = [
         "concurso_previsto", "tamanho", "ordem",
         "d1","d2","d3","d4","d5","d6","d7","d8","d9","d10","d11","d12","d13","d14","d15","d16","d17","d18",
@@ -245,15 +244,13 @@ def insert_pred(
         now_str(),
     ]
 
-    placeholders = ",".join(["?"] * len(cols))
+    placeholders = ",".join(["?"] * len(values))
     sql = f"INSERT OR IGNORE INTO predicoes_proximo ({','.join(cols)}) VALUES ({placeholders})"
 
     cur = conn.cursor()
     cur.execute(sql, values)
     conn.commit()
     return cur.rowcount > 0
-
-
 
 
 # ==========================
@@ -291,6 +288,9 @@ def register_brains_auto(conn, hub: BrainHub) -> List[str]:
     try:
         from training.brains.heuristic.heuristic_brains import build_heuristic_brains
 
+
+    try:
+        from training.brains.heuristic.heuristic_brains import build_heuristic_brains
         for brain in build_heuristic_brains(conn):
             _register(brain)
     except Exception:
@@ -365,6 +365,9 @@ def get_profile_weights(perfil: str) -> Tuple[float, float, float, float, float]
         # confia mais na memória 14/15, mas mantém proteção
         return (0.50, 0.12, 0.25, 0.05, 0.08)
     # balanceado
+        return (0.45, 0.22, 0.10, 0.13, 0.10)
+    if perfil == "agressivo":
+        return (0.50, 0.12, 0.25, 0.05, 0.08)
     return (0.50, 0.18, 0.15, 0.10, 0.07)
 
 
