@@ -1,4 +1,3 @@
-# training/core/brain_hub.py
 from __future__ import annotations
 
 from collections import defaultdict
@@ -7,11 +6,13 @@ from typing import Any, Dict, List, Tuple
 
 from training.core.brain_interface import BrainInterface
 
+
 def jaccard(a: List[int], b: List[int]) -> float:
     sa, sb = set(a), set(b)
     inter = len(sa & sb)
     uni = len(sa | sb)
     return inter / uni if uni else 0.0
+
 
 class BrainHub:
     """
@@ -137,7 +138,6 @@ class BrainHub:
 
     def generate_games(self, context: Dict[str, Any], size: int, per_brain: int, top_n: int) -> List[Dict[str, Any]]:
         candidatos = self.generate_candidates(context, size, per_brain)
-        # diversidade mais rígida para 15, mais leve para 18
         max_sim = 0.80 if size == 15 else 0.88
         densidade = len(candidatos) / max(1, top_n)
         if densidade < 2.0:
@@ -152,12 +152,13 @@ class BrainHub:
         )
 
     def learn(self, concurso_n: int, jogo: List[int], resultado_n1: List[int], pontos: int, context: Dict[str, Any], brain_id: str):
-        # meta-score do hub
         m = self.meta[brain_id]
         m["usos"] += 1
         m["pontos"] += pontos
-        if pontos >= 14: m["q14"] += 1
-        if pontos >= 15: m["q15"] += 1
+        if pontos >= 14:
+            m["q14"] += 1
+        if pontos >= 15:
+            m["q15"] += 1
 
         for b in self.brains:
             if b.id == brain_id:
