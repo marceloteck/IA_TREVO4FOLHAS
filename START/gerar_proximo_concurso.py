@@ -262,14 +262,16 @@ def insert_pred(
 def register_brains_auto(conn, hub: BrainHub) -> List[str]:
     loaded: List[str] = []
 
+    def _register(brain) -> None:
+        hub.register(brain)
+        loaded.append(getattr(brain, "id", brain.__class__.__name__))
+
     def _try_add(import_path: str, cls_name: str, *args, **kwargs):
-        nonlocal loaded
         try:
             mod = __import__(import_path, fromlist=[cls_name])
             cls = getattr(mod, cls_name)
             b = cls(conn, *args, **kwargs)
-            hub.register(b)
-            loaded.append(getattr(b, "id", f"{import_path}.{cls_name}"))
+            _register(b)
         except Exception:
             pass
 
@@ -284,6 +286,13 @@ def register_brains_auto(conn, hub: BrainHub) -> List[str]:
     _try_add("training.brains.statistical.elite_memory_brain", "StatEliteMemoryBrain")
     _try_add("training.brains.statistical.paridade_faixas_brain", "StatParidadeFaixasBrain")
     _try_add("training.brains.structural.pattern_shape_brain", "StructuralPatternShapeBrain")
+    try:
+        from training.brains.heuristic.heuristic_brains import build_heuristic_brains
+
+        for brain in build_heuristic_brains(conn):
+            _register(brain)
+    except Exception:
+        pass
 
     return loaded
 
@@ -370,6 +379,8 @@ def generate_for_size(
     max_sim: float,
     perfil: str,
     salvar_db: bool,
+    exploration_rate: float,
+    max_brain_share: float,
 ) -> Path:
     ultimo_concurso = fetch_max_concurso(conn)
     proximo_concurso = ultimo_concurso + 1
@@ -378,7 +389,7 @@ def generate_for_size(
     freq = context.get("freq_recente", {}) or {}
     memoria_1415 = fetch_memoria_top(conn, min_pontos=14, limit=500)
 
-    hub = BrainHub(conn)
+    hub = BrainHub(conn, exploration_rate=exploration_rate, max_brain_share=max_brain_share)
     loaded = register_brains_auto(conn, hub)
     if not loaded:
         raise RuntimeError("Nenhum cérebro foi carregado. Verifique seus arquivos em training/brains.")
@@ -501,6 +512,8 @@ def main() -> None:
     parser.add_argument("--per-brain", type=int, default=120, help="Candidatos por cérebro.")
     parser.add_argument("--top-n", type=int, default=250, help="Top candidatos após BrainHub (antes do re-ranking).")
     parser.add_argument("--max-sim", type=float, default=0.78, help="Diversidade (Jaccard máximo entre jogos finais).")
+    parser.add_argument("--exploration-rate", type=float, default=0.10, help="Taxa de exploração do BrainHub.")
+    parser.add_argument("--max-brain-share", type=float, default=0.4, help="Limite de participação por cérebro no Top N.")
     parser.add_argument("--perfil", type=str, default="balanceado", choices=["conservador", "balanceado", "agressivo"])
     parser.add_argument("--salvar-db", action="store_true", help="Salvar jogos gerados na tabela predicoes_proximo.")
     parser.add_argument("--both", action="store_true", help="Gerar 15 e 18 no mesmo comando (usa --qtd15 e --qtd18).")
@@ -548,6 +561,8 @@ def main() -> None:
                 max_sim=float(args.max_sim),
                 perfil=str(args.perfil),
                 salvar_db=bool(args.salvar_db),
+                exploration_rate=float(args.exploration_rate),
+                max_brain_share=float(args.max_brain_share),
             )
             generate_for_size(
                 conn=conn,
@@ -559,6 +574,8 @@ def main() -> None:
                 max_sim=float(args.max_sim),
                 perfil=str(args.perfil),
                 salvar_db=bool(args.salvar_db),
+                exploration_rate=float(args.exploration_rate),
+                max_brain_share=float(args.max_brain_share),
             )
         else:
             size = int(args.size)
@@ -575,6 +592,8 @@ def main() -> None:
                 max_sim=float(args.max_sim),
                 perfil=str(args.perfil),
                 salvar_db=bool(args.salvar_db),
+                exploration_rate=float(args.exploration_rate),
+                max_brain_share=float(args.max_brain_share),
             )
 
     finally:
