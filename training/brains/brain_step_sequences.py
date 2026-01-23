@@ -223,7 +223,8 @@ class HeuristicStepSequencesBrain(BaseBrain):
             stats = self.state.get("pattern_stats", {}).get(pid, {})
             top_hits = int(stats.get("top_hits", 0))
             best_hits = int(stats.get("best_hits", 0))
-            weight = 1.0 + top_hits * 0.4 + best_hits * 0.2
+            avg_score = float(stats.get("avg_score", 0.0))
+            weight = 1.0 + top_hits * 0.4 + best_hits * 0.2 + avg_score * 0.03
             weights.append(weight)
 
         base_id, base = random.choices(patterns, weights=weights, k=1)[0]
