@@ -183,6 +183,11 @@
         font-size: 16px;
       }
 
+      .card h4 {
+        margin: 0;
+        font-size: 14px;
+      }
+
       .muted {
         color: var(--muted);
         font-size: 12px;
@@ -221,6 +226,35 @@
 
       .list li strong {
         color: var(--text);
+      }
+
+      .table {
+        width: 100%;
+        border-collapse: collapse;
+      }
+
+      .table th,
+      .table td {
+        padding: 8px;
+        border-bottom: 1px solid rgba(107, 114, 128, 0.12);
+        font-size: 12px;
+        text-align: left;
+      }
+
+      .table th {
+        color: var(--muted);
+        font-weight: 600;
+      }
+
+      .chip {
+        display: inline-flex;
+        padding: 2px 8px;
+        border-radius: 999px;
+        background: var(--surface-alt);
+        color: var(--text);
+        font-size: 11px;
+        gap: 4px;
+        align-items: center;
       }
 
       .status {
@@ -297,6 +331,14 @@
         font-size: 13px;
       }
 
+      .toggle {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 12px;
+        color: var(--muted);
+      }
+
       .badge {
         padding: 6px 10px;
         border-radius: 999px;
@@ -320,6 +362,42 @@
         padding: 18px 36px 28px;
         color: var(--muted);
         font-size: 12px;
+      }
+
+      dialog {
+        border: none;
+        border-radius: var(--radius-lg);
+        padding: 0;
+        box-shadow: var(--shadow);
+        width: min(680px, 90vw);
+      }
+
+      dialog::backdrop {
+        background: rgba(15, 23, 42, 0.45);
+      }
+
+      .modal {
+        padding: 20px 24px 24px;
+        background: var(--surface);
+      }
+
+      .modal-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 16px;
+      }
+
+      .modal-header h3 {
+        margin: 0;
+      }
+
+      .chart {
+        width: 100%;
+        height: 260px;
+        border-radius: var(--radius-md);
+        background: var(--surface-alt);
+        padding: 12px;
       }
 
       @media (max-width: 960px) {
@@ -480,6 +558,10 @@
                 </div>
                 <label>Observações do grupo</label>
                 <textarea placeholder="Ex: priorizar dezenas quentes, limitar repetição..." spellcheck="false"></textarea>
+                <label class="toggle">
+                  <input type="checkbox" name="auto_clear" value="true" checked />
+                  Limpar logs anteriores automaticamente
+                </label>
                 <div class="cta">
                   <button type="submit" name="salvar_db" value="false">Gerar jogos sugeridos</button>
                   <button type="submit" name="salvar_db" value="true" class="secondary">Salvar no histórico</button>
@@ -488,20 +570,38 @@
               </form>
             </div>
             <div class="card">
-              <h3>Gestão de usuários & times</h3>
-              <p class="muted">
-                Estruture grupos, atribua responsáveis e acompanhe metas coletivas. Ideal para
-                vários usuários gerindo estratégias diferentes.
-              </p>
-              <div class="metrics">
-                <div class="metric"><span>Usuários ativos</span><strong>24</strong></div>
-                <div class="metric"><span>Times estratégicos</span><strong>6</strong></div>
-                <div class="metric"><span>Jogos em revisão</span><strong>18</strong></div>
-              </div>
-              <div class="cta" style="margin-top: 12px;">
-                <span class="badge">Multiusuário</span>
-                <span class="badge accent">Operação colaborativa</span>
-              </div>
+              <h3>Banco de dados (jogos salvos)</h3>
+              {% if db_snapshot.available %}
+              <p class="muted">Fonte: {{ db_snapshot.path }}</p>
+              {% if db_snapshot.saved_games %}
+              <table class="table">
+                <thead>
+                  <tr>
+                    <th>Concurso</th>
+                    <th>Tam.</th>
+                    <th>Jogo</th>
+                    <th>Score</th>
+                    <th>Perfil</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for jogo in db_snapshot.saved_games %}
+                  <tr>
+                    <td>#{{ jogo.concurso_previsto }}</td>
+                    <td>{{ jogo.tamanho }}</td>
+                    <td>{{ jogo.dezenas | join(', ') }}</td>
+                    <td>{{ "%.2f"|format(jogo.score_final) }}</td>
+                    <td>{{ jogo.perfil }}</td>
+                  </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+              {% else %}
+              <p class="muted">Nenhum jogo salvo no histórico ainda.</p>
+              {% endif %}
+              {% else %}
+              <p class="muted">{{ db_snapshot.error }}</p>
+              {% endif %}
             </div>
           </section>
 
@@ -558,6 +658,10 @@
                     <option value="false">Não</option>
                   </select>
                 </div>
+                <label class="toggle">
+                  <input type="checkbox" name="auto_clear" value="true" checked />
+                  Limpar relatórios anteriores automaticamente
+                </label>
                 <div class="cta">
                   <button type="submit">Rodar avaliação completa</button>
                   <span class="badge warn">Rotina crítica</span>
@@ -584,6 +688,10 @@
                     </select>
                   </div>
                 </div>
+                <label class="toggle">
+                  <input type="checkbox" name="auto_clear" value="true" checked />
+                  Limpar logs anteriores automaticamente
+                </label>
                 <div class="cta">
                   <button type="submit" class="secondary">Iniciar treino</button>
                   <span>Treinamento contínuo para performance em tempo real.</span>
@@ -592,10 +700,77 @@
             </div>
           </section>
 
+          <section class="grid" id="aprendizado">
+            <div class="card">
+              <h3>Aprendizado histórico</h3>
+              {% if db_snapshot.available %}
+              <div class="metrics">
+                <div class="metric"><span>Memória 11+</span><strong>{{ db_snapshot.learning_summary.memoria_total }}</strong></div>
+                <div class="metric"><span>Acertos 14/15</span><strong>{{ db_snapshot.learning_summary.acertos_14_15 }}</strong></div>
+                <div class="metric"><span>Tentativas salvas</span><strong>{{ db_snapshot.learning_summary.tentativas_total }}</strong></div>
+              </div>
+              <div class="cta" style="margin-top: 12px;">
+                <button type="button" class="secondary" id="open-learning-chart">Abrir gráfico de aprendizado</button>
+                <span class="badge accent">Nível: {{ db_snapshot.learning_chart.nivel }}%</span>
+              </div>
+              {% if db_snapshot.learning_history %}
+              <table class="table" style="margin-top: 12px;">
+                <thead>
+                  <tr>
+                    <th>Concursos</th>
+                    <th>Tipo</th>
+                    <th>Acertos</th>
+                    <th>Score</th>
+                    <th>Brain</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {% for item in db_snapshot.learning_history %}
+                  <tr>
+                    <td>{{ item.concurso_n }} → {{ item.concurso_n1 }}</td>
+                    <td>{{ item.tipo_jogo }}</td>
+                    <td>{{ item.acertos }}</td>
+                    <td>{{ "%.2f"|format(item.score) }}</td>
+                    <td>{{ item.brain_id }}</td>
+                  </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+              {% else %}
+              <p class="muted" style="margin-top: 12px;">Sem tentativas recentes registradas.</p>
+              {% endif %}
+              {% else %}
+              <p class="muted">{{ db_snapshot.error }}</p>
+              {% endif %}
+            </div>
+            <div class="card">
+              <h3>Status do aprendizado</h3>
+              <p class="muted">
+                {{ "Banco disponível" if db_snapshot.available else "Banco indisponível" }}
+                {% if db_snapshot.available %}
+                — Atualize com START/update_concursos.py para manter a IA atualizada.
+                {% endif %}
+              </p>
+              <ul class="list">
+                <li><strong>Nível de conhecimento:</strong> {{ db_snapshot.learning_chart.nivel }}%</li>
+                <li><strong>Último treinamento:</strong> {{ db_snapshot.learning_history[0].timestamp if db_snapshot.learning_history else "-" }}</li>
+                <li><strong>Jogos salvos:</strong> {{ db_snapshot.saved_games | length }}</li>
+              </ul>
+              <div class="cta" style="margin-top: 12px;">
+                <span class="badge">Monitoramento</span>
+                <span class="badge accent">Aprendizado contínuo</span>
+              </div>
+            </div>
+          </section>
+
           <section class="grid" id="relatorio">
             <div class="card">
               <h3>Gerar relatório HTML</h3>
               <form method="post" action="{{ url_for('gerar_relatorio') }}">
+                <label class="toggle">
+                  <input type="checkbox" name="auto_clear" value="true" checked />
+                  Limpar HTML anterior automaticamente
+                </label>
                 <button type="submit">Gerar relatório estático</button>
                 <p class="muted">
                   Gera um arquivo HTML em /reports/dashboard.html usando os relatórios atuais.
@@ -625,5 +800,65 @@
         </footer>
       </div>
     </div>
+    <dialog id="learning-chart-modal">
+      <div class="modal">
+        <div class="modal-header">
+          <div>
+            <h3>Nível de aprendizado da IA</h3>
+            <p class="muted">Evolução baseada na memória dos jogos (11+).</p>
+          </div>
+          <button type="button" class="secondary" id="close-learning-chart">Fechar</button>
+        </div>
+        <canvas id="learning-chart" class="chart" width="600" height="260"></canvas>
+      </div>
+    </dialog>
+    <script>
+      const chartData = {{ db_snapshot.learning_chart | tojson }};
+      const openButton = document.getElementById("open-learning-chart");
+      const closeButton = document.getElementById("close-learning-chart");
+      const modal = document.getElementById("learning-chart-modal");
+
+      function drawChart() {
+        const canvas = document.getElementById("learning-chart");
+        if (!canvas || !chartData.labels.length) {
+          return;
+        }
+        const ctx = canvas.getContext("2d");
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        const padding = 36;
+        const maxValue = Math.max(...chartData.values, 1);
+        const barWidth = (canvas.width - padding * 2) / chartData.values.length - 12;
+        const originY = canvas.height - padding;
+
+        ctx.fillStyle = "#1d4ed8";
+        chartData.values.forEach((value, index) => {
+          const barHeight = (value / maxValue) * (canvas.height - padding * 2);
+          const x = padding + index * (barWidth + 12);
+          const y = originY - barHeight;
+          ctx.fillRect(x, y, barWidth, barHeight);
+
+          ctx.fillStyle = "#1f2937";
+          ctx.font = "12px 'Inter', sans-serif";
+          ctx.fillText(chartData.labels[index], x + barWidth / 4, originY + 16);
+          ctx.fillStyle = "#1d4ed8";
+        });
+
+        ctx.fillStyle = "#6b7280";
+        ctx.font = "12px 'Inter', sans-serif";
+        ctx.fillText(`Nível atual: ${chartData.nivel}%`, padding, 20);
+      }
+
+      if (openButton) {
+        openButton.addEventListener("click", () => {
+          modal.showModal();
+          drawChart();
+        });
+      }
+
+      if (closeButton) {
+        closeButton.addEventListener("click", () => modal.close());
+      }
+    </script>
   </body>
 </html>

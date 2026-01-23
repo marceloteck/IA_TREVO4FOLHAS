@@ -4,13 +4,19 @@ import subprocess
 import sys
 import threading
 import tkinter as tk
+import webbrowser
 from dataclasses import dataclass
 from pathlib import Path
 from tkinter import ttk
 from typing import Optional
 
+import sqlite3
+
+from data.BD.connection import get_conn
+
 
 ROOT_DIR = Path(__file__).resolve().parent
+DB_PATH = ROOT_DIR / "data" / "BD" / "lotofacil.db"
 
 
 @dataclass
@@ -30,6 +36,12 @@ def resolve_python() -> Path:
     if venv_python.exists():
         return venv_python
     return Path(sys.executable)
+
+
+def safe_table_exists(conn: sqlite3.Connection, name: str) -> bool:
+    cur = conn.cursor()
+    cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (name,))
+    return cur.fetchone() is not None
 
 
 class DesktopApp(tk.Tk):
@@ -101,6 +113,9 @@ class DesktopApp(tk.Tk):
         self._add_button(buttons_frame, "Atualizar banco de dados (merge)", self.update_database)
         self._add_button(buttons_frame, "Status do aprendizado", self.learning_status)
         self._add_button(buttons_frame, "Iniciar dashboard", self.start_dashboard)
+        self._add_button(buttons_frame, "Abrir dashboard no navegador", self.open_dashboard)
+        self._add_button(buttons_frame, "Listar jogos salvos (DB)", self.list_saved_games)
+        self._add_button(buttons_frame, "Resumo aprendizado (DB)", self.learning_summary)
 
         self._add_button(buttons_frame, "Limpar console", self.clear_log)
 
@@ -211,6 +226,23 @@ class DesktopApp(tk.Tk):
                 self.result_queue.put(CommandResult(label=label, returncode=process.returncode))
             except Exception as e:
                 self.log_queue.put(f"[ERRO] Falha ao executar comando: {e}\n")
+                self.result_queue.put(CommandResult(label=label, returncode=1))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _run_db_task(self, label: str, task) -> None:
+        def worker() -> None:
+            self.log_queue.put(f"\n▶ {label}\n")
+            if not DB_PATH.exists():
+                self.log_queue.put(f"[ERRO] Banco não encontrado: {DB_PATH}\n")
+                self.result_queue.put(CommandResult(label=label, returncode=1))
+                return
+            try:
+                with get_conn(str(DB_PATH)) as conn:
+                    task(conn)
+                self.result_queue.put(CommandResult(label=label, returncode=0))
+            except sqlite3.Error as exc:
+                self.log_queue.put(f"[ERRO] Falha ao acessar banco: {exc}\n")
                 self.result_queue.put(CommandResult(label=label, returncode=1))
 
         threading.Thread(target=worker, daemon=True).start()
@@ -331,6 +363,64 @@ class DesktopApp(tk.Tk):
         env.setdefault("HOST", "0.0.0.0")
         env.setdefault("PORT", "5000")
         self._run_command("Dashboard", [str(python_exec), "-m", "src.web_dashboard"], env=env)
+
+    def open_dashboard(self) -> None:
+        url = "http://127.0.0.1:5000"
+        self.log_queue.put(f"\n▶ Abrindo dashboard: {url}\n")
+        webbrowser.open(url)
+
+    def list_saved_games(self) -> None:
+        def task(conn: sqlite3.Connection) -> None:
+            if not safe_table_exists(conn, "predicoes_proximo"):
+                self.log_queue.put("Tabela predicoes_proximo não encontrada.\n")
+                return
+            cur = conn.cursor()
+            cur.execute(
+                """
+                SELECT concurso_previsto, tamanho,
+                       d1,d2,d3,d4,d5,d6,d7,d8,d9,d10,d11,d12,d13,d14,d15,d16,d17,d18,
+                       score_final, perfil, timestamp
+                FROM predicoes_proximo
+                ORDER BY timestamp DESC, id DESC
+                LIMIT 10
+                """
+            )
+            rows = cur.fetchall()
+            if not rows:
+                self.log_queue.put("Sem jogos salvos no banco.\n")
+                return
+            for row in rows:
+                dezenas = [str(x) for x in row[2:20] if x is not None]
+                self.log_queue.put(
+                    f"#{row[0]} | {row[1]} dezenas | [{', '.join(dezenas)}] "
+                    f"| score {row[20]:.2f} | {row[21] or '-'} | {row[22] or '-'}\n"
+                )
+
+        self._run_db_task("Jogos salvos (DB)", task)
+
+    def learning_summary(self) -> None:
+        def task(conn: sqlite3.Connection) -> None:
+            cur = conn.cursor()
+            if safe_table_exists(conn, "memoria_jogos"):
+                cur.execute("SELECT COUNT(*) FROM memoria_jogos")
+                total_mem = cur.fetchone()[0]
+                cur.execute("SELECT COUNT(*) FROM memoria_jogos WHERE acertos >= 14")
+                total_14 = cur.fetchone()[0]
+                cur.execute("SELECT COUNT(*) FROM memoria_jogos WHERE acertos >= 15")
+                total_15 = cur.fetchone()[0]
+                self.log_queue.put(f"Memória 11+: {total_mem}\n")
+                self.log_queue.put(f"Acertos 14+: {total_14} | Acertos 15: {total_15}\n")
+            else:
+                self.log_queue.put("Tabela memoria_jogos não encontrada.\n")
+
+            if safe_table_exists(conn, "tentativas"):
+                cur.execute("SELECT COUNT(*) FROM tentativas")
+                total_tentativas = cur.fetchone()[0]
+                self.log_queue.put(f"Tentativas registradas: {total_tentativas}\n")
+            else:
+                self.log_queue.put("Tabela tentativas não encontrada.\n")
+
+        self._run_db_task("Resumo aprendizado (DB)", task)
 
 
 if __name__ == "__main__":
