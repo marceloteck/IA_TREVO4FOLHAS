@@ -61,7 +61,7 @@ class DesktopApp(tk.Tk):
     def clear_log(self) -> None:
         self.log_text.configure(state="normal")
         self.log_text.delete("1.0", "end")
-        self.log_text.insert("end", "Log limpo.\n")
+        self.log_text.insert("end", "Bem-vindo! Selecione uma ação à esquerda.\n")
         self.log_text.configure(state="disabled")
 
 
