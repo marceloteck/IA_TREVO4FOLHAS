@@ -392,6 +392,7 @@ def run_one_concurso(
     cand18 = (cand18 or [])[: int(avaliar_top_k)]
 
     mem = a14 = a15 = 0
+    acertos_max = 0
     tentativa = 1
 
     def _process(cands: List[Dict[str, Any]], tipo: int):
@@ -415,6 +416,8 @@ def run_one_concurso(
                     continue
 
             acertos = contar_acertos(jogo, resultado_n1)
+            if acertos > acertos_max:
+                acertos_max = acertos
             score = float(c.get("score", 0.0))
             brain_id = str(c.get("brain_id", "unknown"))
 
@@ -465,7 +468,7 @@ def run_one_concurso(
     _process(cand15, 15)
     _process(cand18, 18)
 
-    return {"mem": mem, "a14": a14, "a15": a15}
+    return {"mem": mem, "a14": a14, "a15": a15, "acertos_max": acertos_max}
 
 
 # ==========================
@@ -480,6 +483,7 @@ def main() -> None:
     p.add_argument("--save-every", type=int, default=DEFAULT_SAVE_EVERY, help="Salvar estados do hub a cada N concursos.")
     p.add_argument("--min-mem", type=int, default=DEFAULT_MIN_MEM, help="Salvar memoria_jogos a partir deste valor.")
     p.add_argument("--avaliar-top-k", type=int, default=40, help="Quantos candidatos avaliar por tamanho (15 e 18).")
+    p.add_argument("--progress-every", type=int, default=5, help="Log de progresso a cada N concursos dentro do bloco.")
     p.add_argument("--seed", type=int, default=None, help="Seed (opcional).")
     p.add_argument("--aggressive", action="store_true", help="Exploração mais pesada (mais candidatos).")
     args = p.parse_args()
@@ -521,6 +525,7 @@ def main() -> None:
         log(f"📌 block_size           : {int(args.block_size)}")
         log(f"📌 save_every           : {int(args.save_every)}")
         log(f"📌 avaliar_top_k        : {int(args.avaliar_top_k)}")
+        log(f"📌 progress_every       : {int(args.progress_every)}")
         if run_seconds > 0:
             log(f"⏱️ Modo tempo            : {run_seconds:.0f}s")
         if max_steps > 0:
@@ -604,10 +609,11 @@ def main() -> None:
                 if steps_done % max(1, int(args.save_every)) == 0:
                     hub.save_all()
 
-                if i % 25 == 0:
+                if i % max(1, int(args.progress_every)) == 0:
                     log(
                         f"↪ progresso bloco: {i}/{len(block)} | steps={steps_done} | "
-                        f"mem+={total_mem} | 14+={total_14} | 15={total_15}"
+                        f"mem+={total_mem} | 14+={total_14} | 15={total_15} | "
+                        f"melhor_acerto={stats.get('acertos_max', 0)}"
                     )
 
             # salva no final de cada bloco
