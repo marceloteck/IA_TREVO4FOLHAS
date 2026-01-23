@@ -9,8 +9,8 @@ REM =========================================
 
 title BACKTEST 24x7 - IA TREVO
 
-REM ---- Ir para a raiz do projeto (um nível acima de START) ----
-cd /d "%~dp0.."
+REM ---- Ir para a raiz do projeto ----
+cd /d "%~dp0"
 
 echo =========================================
 echo   BACKTEST 24x7 - IA TREVO
@@ -52,8 +52,6 @@ if not exist "%LOG_DIR%" mkdir "%LOG_DIR%"
 echo [INFO] Projeto: %CD%
 echo [INFO] LOG: %LOG_FILE%
 echo.
-
-cd /d "%~dp0"
 
 REM Ativar venv (se existir)
 if exist "venv\Scripts\activate.bat" (
