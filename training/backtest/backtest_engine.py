@@ -267,6 +267,7 @@ def register_brains_auto(conn, hub: BrainHub) -> List[str]:
     _try_add("training.brains.statistical.elite_memory_brain", "StatEliteMemoryBrain")
     _try_add("training.brains.statistical.paridade_faixas_brain", "StatParidadeFaixasBrain")
     _try_add("training.brains.structural.pattern_shape_brain", "StructuralPatternShapeBrain")
+    _try_add("training.brains.brain_step_sequences", "HeuristicStepSequencesBrain")
 
     return loaded
 
