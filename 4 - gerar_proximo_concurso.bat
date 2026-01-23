@@ -16,6 +16,8 @@ if exist "venv\Scripts\activate.bat" (
   echo [AVISO] venv nao encontrado. Rodando com Python do sistema...
 )
 
+echo.
+
 REM Config padrao (edite se quiser)
 set PERFIL=agressivo
 set JANELA=300
