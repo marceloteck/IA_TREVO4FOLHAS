@@ -1,11 +1,8 @@
 @echo off
-REM =====================================================
-REM BAT - Inicializar Banco de Dados (Windows)
-REM Projeto: IA_TREVO4FOLHAS
-REM =====================================================
-
-REM Garante que o BAT rode na pasta raiz do projeto
-cd /d "%~dp0"
+echo =========================================
+echo BAT - Inicializar Banco de Dados
+echo Projeto: IA_TREVO4FOLHAS
+echo =========================================
 
 REM Ativar venv (se existir)
 if exist "venv\Scripts\activate.bat" (

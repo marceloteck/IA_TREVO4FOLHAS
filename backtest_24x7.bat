@@ -1,106 +1,79 @@
 @echo off
-setlocal enabledelayedexpansion
+setlocal EnableExtensions EnableDelayedExpansion
 
-REM =========================================
-REM  BACKTEST 24x7 - IA TREVO (Windows)
-REM  - replay N->N+1 infinito (exploração)
-REM  - persiste no BD (tentativas + memoria_jogos + checkpoint_backtest)
-REM =========================================
+REM ==========================
+REM CONFIG (edite aqui)
+REM ==========================
+set "VENV_DIR=.venv"
+set "LOG_FILE=logs\treino.log"
 
-title BACKTEST 24x7 - IA TREVO
+set "BLOCK_SIZE=200"
+set "SAVE_EVERY=50"
+set "AVALIAR_TOP_K=60"
+set "MIN_MEM=1000"
 
-REM ---- Ir para a raiz do projeto ----
-cd /d "%~dp0"
+set "AGGRESSIVE=false"
+set "SEED="
 
-echo =========================================
-echo   BACKTEST 24x7 - IA TREVO
-echo =========================================
+set "SLEEP_SECONDS=10"
+set "SLEEP_ON_ERROR=30"
 
-REM ---- Configs (ajuste se quiser) ----
-set VENV_DIR=venv
-set LOG_DIR=logs
-set LOG_FILE=%LOG_DIR%\backtest_24x7.log
+REM ==========================
+REM Preparar pasta de logs
+REM ==========================
+for %%D in ("%LOG_FILE%") do if not exist "%%~dpD" mkdir "%%~dpD" >nul 2>&1
 
-REM Quantos concursos por "ciclo" (bloco)
-set BLOCK_SIZE=500
-
-REM Salvar estado do hub a cada N concursos
-set SAVE_EVERY=10
-
-REM Quantos candidatos avaliar por tamanho (custo)
-set AVALIAR_TOP_K=40
-
-REM Mínimo para salvar memória forte
-set MIN_MEM=11
-
-REM Seed (vazio = aleatório)
-set SEED=
-
-REM Modo agressivo: true/false
-set AGGRESSIVE=false
-
-REM Pausa quando termina um ciclo (segundos)
-set SLEEP_AFTER_BLOCK=3
-
-REM Pausa se der erro (segundos)
-set SLEEP_ON_ERROR=20
-
-
-REM ---- Preparar pasta de logs ----
-if not exist "%LOG_DIR%" mkdir "%LOG_DIR%"
-
-echo [INFO] Projeto: %CD%
-echo [INFO] LOG: %LOG_FILE%
-echo.
-
+REM ==========================
 REM Ativar venv (se existir)
-if exist "venv\Scripts\activate.bat" (
-  echo [OK] Ativando venv...
-  call "venv\Scripts\activate.bat"
+REM ==========================
+if exist "%VENV_DIR%\Scripts\activate.bat" (
+  echo [OK] Ativando venv: %VENV_DIR%
+  call "%VENV_DIR%\Scripts\activate.bat"
 ) else (
-  echo [AVISO] venv nao encontrado. Rodando com Python do sistema...
+  echo [AVISO] venv nao encontrado em "%VENV_DIR%". Rodando com Python do sistema...
 )
 
-REM ---- Loop infinito ----
+REM ==========================
+REM Loop infinito
+REM ==========================
 :LOOP
 
-echo.
+echo.>>"%LOG_FILE%"
 echo ----------------------------------------- >> "%LOG_FILE%"
 echo [%date% %time%] Ciclo iniciado >> "%LOG_FILE%"
 echo ----------------------------------------- >> "%LOG_FILE%"
 
 echo [RUN] Garantindo DB (schema + import CSV)...
-python START\startBD.py >> "%LOG_FILE%" 2>&1
+python "START\startBD.py" >> "%LOG_FILE%" 2>&1
 if errorlevel 1 (
   echo [ERRO] startBD falhou. Veja log: %LOG_FILE%
+  echo [%date% %time%] ERRO: startBD falhou >> "%LOG_FILE%"
   timeout /t %SLEEP_ON_ERROR% >nul
   goto LOOP
 )
 
-REM ---- Montar comando ----
-set CMD=python -m training.backtest.backtest_engine --steps %BLOCK_SIZE% --save-every %SAVE_EVERY% --avaliar-top-k %AVALIAR_TOP_K% --min-mem %MIN_MEM%
+REM ==========================
+REM Montar comando do treino
+REM ==========================
+set "CMD=python -m training.backtest.backtest_engine --steps %BLOCK_SIZE% --save-every %SAVE_EVERY% --avaliar-top-k %AVALIAR_TOP_K% --min-mem %MIN_MEM%"
 
-if /I "%AGGRESSIVE%"=="true" (
-  set CMD=!CMD! --aggressive
-)
-
-if not "%SEED%"=="" (
-  set CMD=!CMD! --seed %SEED%
-)
+if /I "%AGGRESSIVE%"=="true" set "CMD=!CMD! --aggressive"
+if not "%SEED%"=="" set "CMD=!CMD! --seed %SEED%"
 
 echo [RUN] !CMD!
-echo [%date% %time%] RUN: !CMD! >> "%LOG_FILE%"
+echo [%date% %time%] RUN: !CMD!>>"%LOG_FILE%"
 
-!CMD! >> "%LOG_FILE%" 2>&1
-if errorlevel 1 (
-  echo [ERRO] Backtest falhou (vai reiniciar em %SLEEP_ON_ERROR%s). Veja log: %LOG_FILE%
-  echo [%date% %time%] ERRO no backtest. Reiniciando... >> "%LOG_FILE%"
+call !CMD! >> "%LOG_FILE%" 2>&1
+set "EXITCODE=!errorlevel!"
+
+if not "!EXITCODE!"=="0" (
+  echo [ERRO] treino falhou (exit=!EXITCODE!). Veja log: %LOG_FILE%
+  echo [%date% %time%] ERRO: treino falhou (exit=!EXITCODE!)>>"%LOG_FILE%"
   timeout /t %SLEEP_ON_ERROR% >nul
   goto LOOP
 )
 
-echo [OK] Ciclo concluido. Pausa %SLEEP_AFTER_BLOCK%s...
-echo [%date% %time%] Ciclo concluido OK. >> "%LOG_FILE%"
-timeout /t %SLEEP_AFTER_BLOCK% >nul
-
+echo [OK] Ciclo finalizado. Aguardando %SLEEP_SECONDS%s...
+echo [%date% %time%] OK: ciclo finalizado>>"%LOG_FILE%"
+timeout /t %SLEEP_SECONDS% >nul
 goto LOOP

@@ -1,14 +1,14 @@
 =========================================
 🎯 JOGOS SUGERIDOS — PRÓXIMO CONCURSO
 =========================================
-Data/Hora: 2026-01-22 01:36:11
+Data/Hora: 2026-01-22 20:44:12
 Último concurso conhecido: 3591
 Próximo concurso: 3592
 Tamanho do jogo: 15
-Tamanho base (compactação): 19
+Tamanho base (compactação): 15
 Cérebros ativos: 58
-Perfil: balanceado
-Pesos: hub=0.5 freq=0.18 mem=0.15 shape=0.1
+Perfil: agressivo
+Pesos: hub=0.5 freq=0.12 mem=0.25 shape=0.05
 Janela (contexto): 300
 Candidatos por cérebro: 120
 Top_n pós-hub: 250
@@ -16,72 +16,42 @@ Diversidade max_sim (Jaccard): 0.78
 Jogos fortes extras: 1
 =========================================
 
-JOGO 01: [1, 2, 4, 7, 10, 12, 13, 14, 15, 17, 20, 21, 22, 24, 25]
-  score_final=0.856940 | hub=0.945284 | freq=0.948877 | mem=0.833333 | shape=1.000000 | ran=0.450000 | ensemble=0.020000 | fonte=struct_core_protect
+JOGO 01: [1, 2, 3, 4, 6, 9, 11, 12, 13, 15, 17, 19, 20, 21, 22]
+  score_final=0.827356 | hub=0.982812 | freq=0.946805 | mem=0.833333 | shape=1.000000 | ran=0.450000 | ensemble=0.000000 | fonte=struct_core_protect
 
-JOGO 02: [1, 3, 4, 5, 6, 7, 12, 13, 14, 15, 17, 20, 22, 23, 25]
-  score_final=0.848076 | hub=0.976115 | freq=0.941623 | mem=0.736842 | shape=0.800000 | ran=0.000000 | ensemble=0.000000 | fonte=struct_core_protect
+JOGO 02: [1, 4, 5, 6, 7, 11, 12, 13, 17, 18, 20, 21, 22, 24, 25]
+  score_final=0.826022 | hub=0.909222 | freq=0.942314 | mem=0.833333 | shape=1.000000 | ran=0.000000 | ensemble=0.000000 | fonte=heur_even7_row4
 
-JOGO 03: [2, 4, 5, 7, 8, 12, 13, 14, 15, 17, 20, 21, 22, 24, 25]
-  score_final=0.839346 | hub=0.982027 | freq=0.940587 | mem=0.736842 | shape=1.000000 | ran=0.450000 | ensemble=0.000000 | fonte=struct_core_protect
+JOGO 03: [1, 2, 4, 5, 9, 10, 11, 12, 13, 15, 17, 18, 21, 24, 25]
+  score_final=0.818420 | hub=0.986183 | freq=0.941623 | mem=0.833333 | shape=0.800000 | ran=0.450000 | ensemble=0.000000 | fonte=stat_elite_memory
 
-JOGO 04: [1, 2, 3, 6, 7, 8, 10, 11, 12, 13, 17, 18, 19, 22, 25]
-  score_final=0.839339 | hub=0.960393 | freq=0.942314 | mem=0.736842 | shape=1.000000 | ran=0.300000 | ensemble=0.000000 | fonte=stat_nucleo_satelites
+JOGO 04: [1, 4, 7, 8, 11, 12, 13, 15, 17, 18, 19, 20, 23, 24, 25]
+  score_final=0.806644 | hub=0.966877 | freq=0.941623 | mem=0.736842 | shape=1.000000 | ran=0.300000 | ensemble=0.000000 | fonte=struct_core_protect
 
-JOGO 05: [1, 2, 5, 6, 7, 10, 14, 15, 17, 18, 19, 20, 22, 23, 25]
-  score_final=0.839293 | hub=0.954716 | freq=0.935751 | mem=0.833333 | shape=1.000000 | ran=0.450000 | ensemble=0.000000 | fonte=stat_nucleo_satelites
+JOGO 05: [1, 4, 5, 7, 9, 12, 13, 14, 15, 16, 17, 18, 21, 22, 23]
+  score_final=0.804655 | hub=0.937387 | freq=0.931261 | mem=0.736842 | shape=0.800000 | ran=0.000000 | ensemble=0.000000 | fonte=struct_core_protect
 
-JOGO 06: [1, 2, 4, 6, 7, 9, 11, 13, 15, 16, 17, 20, 21, 24, 25]
-  score_final=0.831095 | hub=0.963413 | freq=0.946459 | mem=0.736842 | shape=1.000000 | ran=0.450000 | ensemble=0.000000 | fonte=stat_nucleo_satelites
+JOGO 06: [1, 4, 6, 7, 10, 11, 12, 13, 17, 18, 19, 20, 21, 24, 25]
+  score_final=0.803869 | hub=0.933248 | freq=0.940933 | mem=0.833333 | shape=0.800000 | ran=0.300000 | ensemble=0.000000 | fonte=stat_elite_memory
 
-JOGO 07: [1, 2, 4, 5, 7, 8, 9, 13, 14, 15, 17, 19, 20, 21, 22]
-  score_final=0.828423 | hub=0.952817 | freq=0.937824 | mem=0.764706 | shape=1.000000 | ran=0.450000 | ensemble=0.000000 | fonte=stat_nucleo_satelites
+JOGO 07: [1, 4, 6, 7, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 23]
+  score_final=0.801501 | hub=0.978581 | freq=0.933333 | mem=0.736842 | shape=0.800000 | ran=0.300000 | ensemble=0.000000 | fonte=struct_core_protect
 
-JOGO 08: [1, 2, 4, 5, 6, 7, 10, 12, 13, 14, 15, 17, 20, 21, 25]
-  score_final=0.828387 | hub=0.959862 | freq=0.941278 | mem=0.736842 | shape=1.000000 | ran=0.450000 | ensemble=0.000000 | fonte=struct_core_protect
+JOGO 08: [1, 2, 4, 6, 7, 9, 12, 13, 15, 17, 19, 20, 21, 22, 24]
+  score_final=0.801237 | hub=0.979152 | freq=0.945423 | mem=0.736842 | shape=1.000000 | ran=0.450000 | ensemble=0.000000 | fonte=struct_core_protect
 
-JOGO 09: [1, 2, 4, 8, 12, 13, 15, 17, 19, 20, 21, 22, 23, 24, 25]
-  score_final=0.828342 | hub=0.958529 | freq=0.944732 | mem=0.736842 | shape=0.800000 | ran=0.450000 | ensemble=0.020000 | fonte=struct_core_protect
+JOGO 09: [2, 4, 5, 6, 7, 9, 10, 11, 12, 15, 17, 18, 20, 21, 24]
+  score_final=0.799288 | hub=0.906905 | freq=0.929188 | mem=0.833333 | shape=1.000000 | ran=0.300000 | ensemble=0.000000 | fonte=heur_even8_sum180_220
 
-JOGO 10: [1, 4, 5, 7, 8, 10, 12, 13, 15, 17, 19, 20, 22, 24, 25]
-  score_final=0.828110 | hub=0.959307 | freq=0.941278 | mem=0.736842 | shape=1.000000 | ran=0.450000 | ensemble=0.000000 | fonte=struct_core_protect
-
-JOGO 11: [1, 2, 3, 4, 6, 7, 8, 10, 12, 13, 15, 17, 20, 23, 25]
-  score_final=0.823887 | hub=0.957405 | freq=0.937133 | mem=0.650000 | shape=1.000000 | ran=0.300000 | ensemble=0.000000 | fonte=struct_core_protect
-
-JOGO 12: [1, 2, 3, 7, 10, 11, 12, 14, 15, 17, 18, 20, 21, 23, 25]
-  score_final=0.823839 | hub=0.956937 | freq=0.938169 | mem=0.650000 | shape=1.000000 | ran=0.300000 | ensemble=0.000000 | fonte=stat_nucleo_satelites
-
-JOGO 13: [1, 2, 3, 4, 10, 12, 13, 14, 17, 19, 20, 21, 22, 24, 25]
-  score_final=0.822397 | hub=0.917939 | freq=0.944041 | mem=0.833333 | shape=1.000000 | ran=0.450000 | ensemble=0.000000 | fonte=heur_even9_sum200_240
-
-JOGO 14: [1, 2, 4, 5, 7, 10, 12, 13, 14, 15, 17, 21, 22, 23, 25]
-  score_final=0.820867 | hub=0.915252 | freq=0.943005 | mem=0.833333 | shape=1.000000 | ran=0.450000 | ensemble=0.000000 | fonte=heur_repeat_9
-
-JOGO 15: [1, 2, 4, 5, 9, 10, 12, 14, 15, 17, 20, 21, 22, 24, 25]
-  score_final=0.820107 | hub=0.915101 | freq=0.939206 | mem=0.833333 | shape=1.000000 | ran=0.450000 | ensemble=0.000000 | fonte=heur_even_9
-
-JOGO 16: [1, 2, 4, 7, 9, 10, 12, 13, 15, 17, 21, 22, 23, 24, 25]
-  score_final=0.819993 | hub=0.953008 | freq=0.944387 | mem=0.833333 | shape=0.800000 | ran=0.450000 | ensemble=0.000000 | fonte=struct_core_protect
-
-JOGO 17: [1, 3, 4, 6, 7, 8, 11, 13, 14, 16, 18, 19, 22, 23, 25]
-  score_final=0.819356 | hub=0.969468 | freq=0.936788 | mem=0.650000 | shape=1.000000 | ran=0.450000 | ensemble=0.000000 | fonte=stat_nucleo_satelites
-
-JOGO 18: [2, 4, 6, 7, 10, 11, 13, 14, 15, 17, 18, 20, 21, 23, 24]
-  score_final=0.819194 | hub=0.922465 | freq=0.935751 | mem=0.736842 | shape=1.000000 | ran=0.300000 | ensemble=0.000000 | fonte=stat_nucleo_satelites
-
-JOGO 19: [1, 4, 5, 7, 8, 12, 13, 14, 15, 17, 19, 20, 22, 23, 25]
-  score_final=0.818838 | hub=0.967438 | freq=0.939551 | mem=0.650000 | shape=1.000000 | ran=0.450000 | ensemble=0.000000 | fonte=struct_core_protect
-
-JOGO 20: [2, 4, 5, 6, 7, 9, 11, 12, 16, 17, 19, 20, 21, 22, 25]
-  score_final=0.818726 | hub=0.943399 | freq=0.933333 | mem=0.736842 | shape=1.000000 | ran=0.450000 | ensemble=0.000000 | fonte=stat_nucleo_satelites
+JOGO 10: [1, 2, 4, 5, 6, 9, 12, 13, 15, 17, 18, 20, 21, 24, 25]
+  score_final=0.795646 | hub=0.921465 | freq=0.938169 | mem=0.833333 | shape=1.000000 | ran=0.450000 | ensemble=0.000000 | fonte=stat_elite_memory
 
 =========================================
 🔥 JOGOS FORTES (TOP SCORE HUB)
 =========================================
 
-FORTE 01: [1, 2, 4, 7, 10, 12, 13, 14, 15, 17, 20, 21, 22, 24, 25]
-  score_final=0.856940 | hub=0.945284 | freq=0.948877 | mem=0.833333 | shape=1.000000 | ran=0.450000 | ensemble=0.020000 | fonte=struct_core_protect
+FORTE 01: [1, 2, 3, 4, 6, 9, 11, 12, 13, 15, 17, 19, 20, 21, 22]
+  score_final=0.827356 | hub=0.982812 | freq=0.946805 | mem=0.833333 | shape=1.000000 | ran=0.450000 | ensemble=0.000000 | fonte=struct_core_protect
 
 Observação importante:
 - Loteria é aleatória. Este ranking só prioriza candidatos segundo o aprendizado do sistema.

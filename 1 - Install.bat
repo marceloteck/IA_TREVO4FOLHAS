@@ -1,6 +1,7 @@
 @echo off
 echo =========================================
-echo   INSTALADOR - IA LOTOFACIL (WINDOWS)
+echo   INSTALADOR - IA LOTOFACIL
+echo   Projeto: IA_TREVO4FOLHAS
 echo =========================================
 
 python --version >nul 2>&1
