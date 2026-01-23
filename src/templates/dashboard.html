@@ -482,10 +482,38 @@
             <div class="card">
               <h3>Status das tarefas</h3>
               <div class="metrics">
-                <div class="status"><span>Avaliação</span> {{ tasks["avaliacao"].status }}</div>
-                <div class="status"><span>Treino</span> {{ tasks["treino"].status }}</div>
-                <div class="status"><span>Gerador</span> {{ tasks["gerar_jogos"].status }}</div>
-                <div class="status"><span>Relatório HTML</span> {{ tasks["relatorio_html"].status }}</div>
+                <div class="status">
+                  <span>Avaliação</span>
+                  {{ tasks["avaliacao"].status }}
+                </div>
+                <p class="muted">
+                  {{ tasks["avaliacao"].last_message or "Aguardando execução." }}
+                  · <a href="{{ url_for('logs', task_name='avaliacao') }}">Ver log</a>
+                </p>
+                <div class="status">
+                  <span>Treino</span>
+                  {{ tasks["treino"].status }}
+                </div>
+                <p class="muted">
+                  {{ tasks["treino"].last_message or "Aguardando execução." }}
+                  · <a href="{{ url_for('logs', task_name='treino') }}">Ver log</a>
+                </p>
+                <div class="status">
+                  <span>Gerador</span>
+                  {{ tasks["gerar_jogos"].status }}
+                </div>
+                <p class="muted">
+                  {{ tasks["gerar_jogos"].last_message or "Aguardando execução." }}
+                  · <a href="{{ url_for('logs', task_name='gerar_jogos') }}">Ver log</a>
+                </p>
+                <div class="status">
+                  <span>Relatório HTML</span>
+                  {{ tasks["relatorio_html"].status }}
+                </div>
+                <p class="muted">
+                  {{ tasks["relatorio_html"].last_message or "Aguardando execução." }}
+                  · <a href="{{ url_for('logs', task_name='relatorio_html') }}">Ver log</a>
+                </p>
               </div>
               <p class="muted">
                 Logs em /reports/*.log
