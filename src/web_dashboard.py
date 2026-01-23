@@ -59,6 +59,22 @@ def now_str() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
+def get_log_path(task_name: str) -> Optional[Path]:
+    task = TASKS.get(task_name)
+    if task and task.log_path:
+        return task.log_path
+    log_list = REPORT_LOGS.get(task_name, [])
+    return log_list[0] if log_list else None
+
+
+def read_log_tail(path: Path, max_lines: int = 200) -> str:
+    if not path.exists():
+        return ""
+    content = path.read_text(encoding="utf-8", errors="replace")
+    lines = content.splitlines()
+    return "\n".join(lines[-max_lines:])
+
+
 def safe_table_exists(conn: sqlite3.Connection, name: str) -> bool:
     cur = conn.cursor()
     cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (name,))
@@ -272,6 +288,13 @@ def run_command(name: str, cmd: list[str], log_file: Path, args: Dict[str, str])
 
 def start_background_task(name: str, cmd: list[str], log_name: str, args: Dict[str, str]) -> None:
     log_file = REPORTS_DIR / log_name
+    task = TASKS[name]
+    task.status = "running"
+    task.started_at = now_str()
+    task.finished_at = None
+    task.last_message = "Tarefa iniciada."
+    task.log_path = log_file
+    task.args = args
     thread = threading.Thread(
         target=run_command,
         args=(name, cmd, log_file, args),
@@ -491,6 +514,17 @@ def status(task_name: str):
             "args": task.args,
         }
     )
+
+
+@app.route("/logs/<task_name>")
+def logs(task_name: str):
+    if task_name not in TASKS:
+        return jsonify({"error": "task not found"}), 404
+    log_path = get_log_path(task_name)
+    if not log_path or not log_path.exists():
+        return jsonify({"error": "log not found"}), 404
+    content = read_log_tail(log_path)
+    return app.response_class(content, mimetype="text/plain")
 
 
 def main() -> None:
