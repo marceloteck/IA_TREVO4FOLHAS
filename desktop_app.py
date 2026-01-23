@@ -7,7 +7,6 @@ import tkinter as tk
 from dataclasses import dataclass
 from pathlib import Path
 from tkinter import ttk
-from typing import Callable, Optional
 
 
 ROOT_DIR = Path(__file__).resolve().parent
@@ -43,9 +42,6 @@ class DesktopApp(tk.Tk):
         self.log_queue: queue.Queue[str] = queue.Queue()
         self.result_queue: queue.Queue[CommandResult] = queue.Queue()
 
-        self._buttons: list[ttk.Button] = []
-        self._busy = False
-
         self._build_ui()
         self.after(120, self._poll_queues)
 
@@ -77,29 +73,57 @@ class DesktopApp(tk.Tk):
         right_panel.pack(side="right", fill="both", expand=True)
 
         self.status_var = tk.StringVar(value="Pronto para executar.")
-        self.status_label = ttk.Label(
+        status_label = ttk.Label(
             left_panel,
             textvariable=self.status_var,
             foreground="#0b5",
             wraplength=320,
         )
-        self.status_label.pack(anchor="w", pady=(0, 16))
+        status_label.pack(anchor="w", pady=(0, 16))
 
         buttons_frame = ttk.LabelFrame(left_panel, text="Ações principais", padding=12)
         buttons_frame.pack(fill="x", pady=(0, 16))
 
-        self._add_button(buttons_frame, "Instalar/Atualizar ambiente", self.install_environment)
-        self._add_button(buttons_frame, "Inicializar banco de dados", self.start_database)
-        self._add_button(buttons_frame, "Atualizar concursos", self.update_contests)
+        self._add_button(
+            buttons_frame,
+            "Instalar/Atualizar ambiente",
+            self.install_environment,
+        )
+        self._add_button(
+            buttons_frame,
+            "Inicializar banco de dados",
+            self.start_database,
+        )
+        self._add_button(
+            buttons_frame,
+            "Atualizar concursos",
+            self.update_contests,
+        )
         self._add_button(
             buttons_frame,
             "Treinar IA (incremental + backtest)",
             self.train_incremental,
         )
-        self._add_button(buttons_frame, "Gerar próximo concurso", self.generate_next_contest)
-        self._add_button(buttons_frame, "Atualizar banco de dados (merge)", self.update_database)
-        self._add_button(buttons_frame, "Status do aprendizado", self.learning_status)
-        self._add_button(buttons_frame, "Iniciar dashboard", self.start_dashboard)
+        self._add_button(
+            buttons_frame,
+            "Gerar próximo concurso",
+            self.generate_next_contest,
+        )
+        self._add_button(
+            buttons_frame,
+            "Atualizar banco de dados (merge)",
+            self.update_database,
+        )
+        self._add_button(
+            buttons_frame,
+            "Status do aprendizado",
+            self.learning_status,
+        )
+        self._add_button(
+            buttons_frame,
+            "Iniciar dashboard",
+            self.start_dashboard,
+        )
 
         config_frame = ttk.LabelFrame(left_panel, text="Configuração de geração", padding=12)
         config_frame.pack(fill="x", pady=(0, 16))
@@ -139,25 +163,15 @@ class DesktopApp(tk.Tk):
         self.log_text.insert("end", "Bem-vindo! Selecione uma ação à esquerda.\n")
         self.log_text.configure(state="disabled")
 
-    def _add_button(self, parent: ttk.Frame, text: str, command: Callable[[], None]) -> None:
+    def _add_button(self, parent: ttk.Frame, text: str, command: callable) -> None:
         button = ttk.Button(parent, text=text, command=command)
         button.pack(fill="x", pady=4)
-        self._buttons.append(button)
 
     def _add_entry(self, parent: ttk.Frame, label: str, variable: tk.StringVar) -> None:
         wrapper = ttk.Frame(parent)
         wrapper.pack(fill="x", pady=4)
         ttk.Label(wrapper, text=label, width=18).pack(side="left")
         ttk.Entry(wrapper, textvariable=variable, width=18).pack(side="right")
-
-    def _set_busy(self, busy: bool, status: Optional[str] = None, color: Optional[str] = None) -> None:
-        self._busy = busy
-        for button in self._buttons:
-            button.configure(state=("disabled" if busy else "normal"))
-        if status is not None:
-            self.status_var.set(status)
-        if color is not None:
-            self.status_label.configure(foreground=color)
 
     def _poll_queues(self) -> None:
         try:
@@ -171,15 +185,24 @@ class DesktopApp(tk.Tk):
             while True:
                 result = self.result_queue.get_nowait()
                 color = "#16a34a" if result.returncode == 0 else "#dc2626"
-                self._set_busy(
-                    False,
-                    status=f"{result.label} finalizado com código {result.returncode}.",
-                    color=color,
+                self.status_var.set(
+                    f"{result.label} finalizado com código {result.returncode}."
                 )
+                self.status_var_label_color(color)
         except queue.Empty:
             pass
 
         self.after(120, self._poll_queues)
+
+    def status_var_label_color(self, color: str) -> None:
+        self.status_var.set(self.status_var.get())
+        for widget in self.children.values():
+            if isinstance(widget, ttk.Frame):
+                for child in widget.winfo_children():
+                    if isinstance(child, ttk.Label) and child.cget("textvariable") == str(
+                        self.status_var
+                    ):
+                        child.configure(foreground=color)
 
     def _append_log(self, text: str) -> None:
         self.log_text.configure(state="normal")
@@ -187,90 +210,63 @@ class DesktopApp(tk.Tk):
         self.log_text.see("end")
         self.log_text.configure(state="disabled")
 
-    def _run_command(self, label: str, command: list[str], env: Optional[dict] = None) -> None:
-        if self._busy:
-            self.log_queue.put("[AVISO] Já existe uma execução em andamento.\n")
-            return
-
+    def _run_command(self, label: str, command: list[str], env: dict | None = None) -> None:
         def worker() -> None:
-            self._set_busy(True, status=f"Executando: {label}...", color="#2563eb")
             self.log_queue.put(f"\n▶ {label}\n")
             self.log_queue.put(f"$ {' '.join(command)}\n")
-            try:
+            process = subprocess.Popen(
+                command,
+                cwd=ROOT_DIR,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                env=env,
+            )
+            if process.stdout:
+                for line in process.stdout:
+                    self.log_queue.put(line)
+            process.wait()
+            self.result_queue.put(CommandResult(label=label, returncode=process.returncode))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _run_sequence(self, label: str, commands: list[list[str]]) -> None:
+        def worker() -> None:
+            self.log_queue.put(f"\n▶ {label}\n")
+            for command in commands:
+                self.log_queue.put(f"$ {' '.join(command)}\n")
                 process = subprocess.Popen(
                     command,
                     cwd=ROOT_DIR,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT,
                     text=True,
-                    env=env,
                 )
                 if process.stdout:
                     for line in process.stdout:
                         self.log_queue.put(line)
                 process.wait()
-                self.result_queue.put(CommandResult(label=label, returncode=process.returncode))
-            except Exception as exc:
-                self.log_queue.put(f"[ERRO] Falha ao executar comando: {exc}\n")
-                self.result_queue.put(CommandResult(label=label, returncode=1))
-
-        threading.Thread(target=worker, daemon=True).start()
-
-    def _run_sequence(self, label: str, commands: list[list[str]]) -> None:
-        if self._busy:
-            self.log_queue.put("[AVISO] Já existe uma execução em andamento.\n")
-            return
-
-        def worker() -> None:
-            self._set_busy(True, status=f"Executando: {label}...", color="#2563eb")
-            self.log_queue.put(f"\n▶ {label}\n")
-            try:
-                for command in commands:
-                    self.log_queue.put(f"$ {' '.join(command)}\n")
-                    process = subprocess.Popen(
-                        command,
-                        cwd=ROOT_DIR,
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.STDOUT,
-                        text=True,
+                if process.returncode != 0:
+                    self.result_queue.put(
+                        CommandResult(label=label, returncode=process.returncode)
                     )
-                    if process.stdout:
-                        for line in process.stdout:
-                            self.log_queue.put(line)
-                    process.wait()
-                    if process.returncode != 0:
-                        self.result_queue.put(
-                            CommandResult(label=label, returncode=process.returncode)
-                        )
-                        return
-                self.result_queue.put(CommandResult(label=label, returncode=0))
-            except Exception as exc:
-                self.log_queue.put(f"[ERRO] Falha ao executar sequência: {exc}\n")
-                self.result_queue.put(CommandResult(label=label, returncode=1))
+                    return
+            self.result_queue.put(CommandResult(label=label, returncode=0))
 
         threading.Thread(target=worker, daemon=True).start()
 
     def install_environment(self) -> None:
         venv_python = get_venv_python()
         commands: list[list[str]] = []
-
         if not venv_python.exists():
             commands.append([sys.executable, "-m", "venv", "venv"])
-
-        requirements_file = ROOT_DIR / "requirements.txt"
-        if not requirements_file.exists():
-            self.log_queue.put(
-                "[AVISO] requirements.txt não encontrado. Pulando instalação de dependências.\n"
-            )
-        else:
-            commands.extend(
-                [
-                    [str(venv_python), "-m", "pip", "install", "--upgrade", "pip"],
-                    [str(venv_python), "-m", "pip", "install", "-r", "requirements.txt"],
-                ]
-            )
-
-        commands.append([str(venv_python), "START/startBD.py"])
+        commands.extend(
+            [
+                [str(venv_python), "-m", "pip", "install", "--upgrade", "pip"],
+                [str(venv_python), "-m", "pip", "install", "-r", "requirements.txt"],
+                [str(venv_python), "START/startBD.py"],
+            ]
+        )
         self._run_sequence("Instalação do ambiente", commands)
 
     def start_database(self) -> None:
