@@ -320,6 +320,50 @@ Estatísticas agregadas (sem salvar jogos fracos)
 
 ⚠️ Sempre mantendo compatibilidade
 
+📊 ANÁLISE PROBABILÍSTICA (LACUNAS QUE VALEM SER ADICIONADAS)
+
+Se o objetivo é maximizar chance de 14/15 sem ilusão de controle, falta tornar explícitas algumas camadas matemáticas
+que aumentam rigor, evitam vieses e ajudam a medir progresso real:
+
+1) Linha de base (benchmark obrigatório)
+- Calcular e fixar a probabilidade teórica de 14/15 na Lotofácil para jogos simples e para jogos combinados.
+- Manter o “baseline aleatório” (sorteio uniforme) em todos os relatórios para comparar ganho real do sistema.
+
+2) Probabilidade condicional e atualização Bayesiana
+- Toda pontuação de um cérebro deve ser interpretada como *posterior* e não como certeza.
+- Usar atualização Bayesiana para reponderar cérebros quando evidências recentes indicarem drift ou estagnação.
+
+3) Calibração e confiabilidade
+- Testar se os scores gerados correspondem à frequência real de acerto (calibração por bins).
+- Um score alto que não converte é sinal de ruído ou overfitting.
+
+4) Estatística de seleção e efeito múltiplas hipóteses
+- Milhões de tentativas aumentam falsos positivos; precisamos corrigir para “multiple testing”.
+- Sempre registrar a taxa de acertos esperada vs. observada com intervalo de confiança.
+
+5) Diversidade como seguro estatístico
+- Diversidade não é estética: é proteção contra colapso em um único padrão fraco.
+- Medir diversidade real (ex: cobertura de faixas, paridade, gaps, distribuição de dezenas).
+
+6) Robustez temporal (drift)
+- Criar métrica de estabilidade de padrões: o que funciona num período precisa ser testado em janelas futuras.
+- Preferir cérebros com “sinal fraco porém estável” em vez de picos instáveis.
+
+7) Simulações controladas (Monte Carlo)
+- Rodar simulações com “cérebros desligados” para quantificar ganho marginal de cada cérebro.
+- Comparar o sistema contra estratégias ingênuas (frequência pura, atraso puro, random).
+
+8) Limite teórico (humildade matemática)
+- Nenhuma IA “quebra” aleatoriedade; no máximo aumenta probabilidade marginal.
+- Quantificar ganho absoluto e relativo (ex: +0,02% vs baseline) para manter expectativa realista.
+
+9) “Quantum-inspired” (sem misticismo)
+- Computação quântica não prevê sorteio, mas heurísticas inspiradas (ex: amostragem com energia, simulated annealing)
+podem ajudar a explorar espaço combinatório com melhor cobertura do que pura aleatoriedade.
+
+👉 Esses pontos não mudam o sistema, apenas adicionam camadas de validação, realismo e medição de eficácia.
+Se não forem adicionados, o risco é confundir sorte com sinal.
+
 🧠 MENTALIDADE FINAL
 
 “Não buscamos eliminar a aleatoriedade.
