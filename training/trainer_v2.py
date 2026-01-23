@@ -30,6 +30,7 @@ from training.brains.structural.pattern_shape_brain import StructuralPatternShap
 from training.brains.heuristic.heuristic_brains import build_heuristic_brains
 from training.brains.structural.core_protect_brain import StructuralCoreProtectBrain
 from training.brains.structural.anti_absence_brain import StructuralAntiAbsenceBrain
+from training.brains.brain_step_sequences import HeuristicStepSequencesBrain
 
 
 # ==========================
@@ -348,6 +349,11 @@ def treinar_pendencias(
     consensus_enabled: Optional[bool] = None,
     consensus_bonus: Optional[float] = None,
     consensus_min_votes: Optional[int] = None,
+    steps_mutation_rate: float = 0.10,
+    steps_exploration_rate: float = 0.10,
+    steps_delta_max: int = 3,
+    steps_wrap_mode: str = "wrap",
+    steps_max_attempts_per_game: int = 50,
 ) -> Dict[str, Any]:
     concursos = _fetch_all_concursos(conn)
     if len(concursos) < 2:
@@ -404,6 +410,17 @@ def treinar_pendencias(
     hub.register(_instantiate_brain(StructuralPatternShapeBrain, conn))
     hub.register(_instantiate_brain(StructuralCoreProtectBrain, conn))
     hub.register(_instantiate_brain(StructuralAntiAbsenceBrain, conn))
+    hub.register(
+        _instantiate_brain(
+            HeuristicStepSequencesBrain,
+            conn,
+            mutation_rate=steps_mutation_rate,
+            exploration_rate=steps_exploration_rate,
+            delta_max=steps_delta_max,
+            wrap_mode=steps_wrap_mode,
+            max_attempts_per_game=steps_max_attempts_per_game,
+        )
+    )
 
     for brain in build_heuristic_brains(conn):
         hub.register(brain)
@@ -554,6 +571,11 @@ def run(
     consensus_enabled: Optional[bool],
     consensus_bonus: Optional[float],
     consensus_min_votes: Optional[int],
+    steps_mutation_rate: float,
+    steps_exploration_rate: float,
+    steps_delta_max: int,
+    steps_wrap_mode: str,
+    steps_max_attempts_per_game: int,
 ) -> None:
     """
     Modo 24/7:
@@ -573,6 +595,11 @@ def run(
                 consensus_enabled=consensus_enabled,
                 consensus_bonus=consensus_bonus,
                 consensus_min_votes=consensus_min_votes,
+                steps_mutation_rate=steps_mutation_rate,
+                steps_exploration_rate=steps_exploration_rate,
+                steps_delta_max=steps_delta_max,
+                steps_wrap_mode=steps_wrap_mode,
+                steps_max_attempts_per_game=steps_max_attempts_per_game,
             )
         finally:
             try:
@@ -606,6 +633,17 @@ def main() -> None:
     parser.add_argument("--consensus-bonus", type=float, default=0.02, help="Bônus por consenso de candidatos.")
     parser.add_argument("--consensus-min-votes", type=int, default=2, help="Mínimo de votos para bônus de consenso.")
 
+    parser.add_argument("--steps-mutation-rate", type=float, default=0.10, help="Mutation rate do brain step sequences.")
+    parser.add_argument("--steps-exploration-rate", type=float, default=0.10, help="Exploration rate do brain step sequences.")
+    parser.add_argument("--steps-delta-max", type=int, default=3, help="Delta máximo (passo) para step sequences.")
+    parser.add_argument("--steps-wrap-mode", type=str, default="wrap", help="Modo de wrap (ex: wrap) para step sequences.")
+    parser.add_argument(
+        "--steps-max-attempts-per-game",
+        type=int,
+        default=50,
+        help="Tentativas por jogo no brain de step sequences.",
+    )
+
     args = parser.parse_args()
 
     run(
@@ -619,6 +657,11 @@ def main() -> None:
         consensus_enabled=bool(args.consensus_enabled),
         consensus_bonus=float(args.consensus_bonus),
         consensus_min_votes=max(2, int(args.consensus_min_votes)),
+        steps_mutation_rate=float(args.steps_mutation_rate),
+        steps_exploration_rate=float(args.steps_exploration_rate),
+        steps_delta_max=int(args.steps_delta_max),
+        steps_wrap_mode=str(args.steps_wrap_mode),
+        steps_max_attempts_per_game=int(args.steps_max_attempts_per_game),
     )
 
 
