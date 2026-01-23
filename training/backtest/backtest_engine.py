@@ -256,6 +256,19 @@ def register_brains_auto(conn, hub: BrainHub) -> List[str]:
             # não explode: backtest precisa continuar mesmo se algum cérebro falhar
             pass
 
+    def _try_add_builder(import_path: str, func_name: str, *args, **kwargs):
+        nonlocal loaded
+        try:
+            mod = __import__(import_path, fromlist=[func_name])
+            builder = getattr(mod, func_name)
+            brains = builder(conn, *args, **kwargs)
+            for b in brains:
+                hub.register(b)
+                loaded.append(getattr(b, "id", f"{import_path}.{func_name}"))
+        except Exception:
+            # não explode: backtest precisa continuar mesmo se algum cérebro falhar
+            pass
+
     # Base confirmados
     _try_add("training.brains.statistical.freq_global_brain", "StatFreqGlobalBrain")
     _try_add("training.brains.statistical.freq_recente_brain", "StatFreqRecenteBrain", janela=120)
@@ -268,6 +281,9 @@ def register_brains_auto(conn, hub: BrainHub) -> List[str]:
     _try_add("training.brains.statistical.paridade_faixas_brain", "StatParidadeFaixasBrain")
     _try_add("training.brains.structural.pattern_shape_brain", "StructuralPatternShapeBrain")
     _try_add("training.brains.brain_step_sequences", "HeuristicStepSequencesBrain")
+    _try_add("training.brains.structural.core_protect_brain", "StructuralCoreProtectBrain")
+    _try_add("training.brains.structural.anti_absence_brain", "StructuralAntiAbsenceBrain")
+    _try_add_builder("training.brains.heuristic.heuristic_brains", "build_heuristic_brains")
 
     return loaded
 
