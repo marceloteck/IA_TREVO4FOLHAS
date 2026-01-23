@@ -71,6 +71,24 @@ IA_TREVO4FOLHAS/
 
 ## ▶️ Como utilizar
 
+### 0) App desktop (sem .bat)
+
+Agora você pode executar tudo via interface desktop em Python (sem remover os .bat).
+
+```bash
+python desktop_app.py
+```
+
+Funcionalidades disponíveis:
+- Instalar/atualizar ambiente (venv + dependências + banco)
+- Inicializar banco
+- Atualizar concursos
+- Treinar IA + backtest
+- Gerar próximo concurso (configurável)
+- Atualizar banco (merge)
+- Status do aprendizado
+- Iniciar dashboard
+
 ### 1) Atualizar resultados
 
 ```bash
