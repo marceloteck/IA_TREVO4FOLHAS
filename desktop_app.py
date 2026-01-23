@@ -46,6 +46,13 @@ class DesktopApp(tk.Tk):
         self._build_ui()
         self.after(120, self._poll_queues)
 
+    def clear_log(self) -> None:
+        self.log_text.configure(state="normal")
+        self.log_text.delete("1.0", "end")
+        self.log_text.insert("end", "Log limpo.\n")
+        self.log_text.configure(state="disabled")
+
+
     def _build_ui(self) -> None:
         header = ttk.Frame(self, padding=16)
         header.pack(fill="x")
@@ -94,6 +101,8 @@ class DesktopApp(tk.Tk):
         self._add_button(buttons_frame, "Atualizar banco de dados (merge)", self.update_database)
         self._add_button(buttons_frame, "Status do aprendizado", self.learning_status)
         self._add_button(buttons_frame, "Iniciar dashboard", self.start_dashboard)
+
+        self._add_button(buttons_frame, "Limpar console", self.clear_log)
 
         config_frame = ttk.LabelFrame(left_panel, text="Configuração de geração", padding=12)
         config_frame.pack(fill="x", pady=(0, 16))
