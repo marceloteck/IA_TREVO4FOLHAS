@@ -39,6 +39,7 @@ TASKS: Dict[str, TaskStatus] = {
     "avaliacao": TaskStatus(),
     "treino": TaskStatus(),
     "relatorio_html": TaskStatus(),
+    "gerar_jogos": TaskStatus(),
 }
 
 
@@ -211,6 +212,40 @@ def treinar():
 
     args = {"limite": limite, "loop": str(loop), "sleep_min": sleep_min}
     start_background_task("treino", cmd, "treino.log", args)
+    return redirect(url_for("index"))
+
+
+@app.route("/gerar-jogos", methods=["POST"])
+def gerar_jogos():
+    if TASKS["gerar_jogos"].status == "running":
+        return redirect(url_for("index"))
+
+    size = request.form.get("size", "15")
+    perfil = request.form.get("perfil", "balanceado")
+    qtd = request.form.get("qtd", "6")
+    salvar_db = request.form.get("salvar_db", "false") == "true"
+
+    cmd = [
+        sys.executable,
+        "START/gerar_proximo_concurso.py",
+        "--size",
+        size,
+        "--qtd",
+        qtd,
+        "--perfil",
+        perfil,
+    ]
+    if salvar_db:
+        cmd.append("--salvar-db")
+
+    args = {
+        "size": size,
+        "perfil": perfil,
+        "qtd": qtd,
+        "salvar_db": str(salvar_db),
+    }
+
+    start_background_task("gerar_jogos", cmd, "gerar_jogos.log", args)
     return redirect(url_for("index"))
 
 

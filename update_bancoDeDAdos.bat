@@ -16,7 +16,7 @@ echo 🚀 Iniciando atualização de banco de dados
 echo =========================================
 
 REM Executa o script Python
-python script\merge_temp_dbs.py
+python scripts\merge_temp_dbs.py
 
 REM Verifica erro
 if errorlevel 1 (
