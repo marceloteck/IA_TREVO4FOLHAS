@@ -28,7 +28,8 @@ No `trainer_v2.py`:
 2. Seleciona um padrão base de deltas (14 passos para 15 dezenas) e expande para 18/19.
 3. Aplica mutação leve nos deltas (probabilidade configurável).
 4. Soma os passos com wrap 1..25, evitando duplicatas via escape incremental.
-5. Ordena o resultado final e devolve o jogo.
+5. Aplica filtros internos e validações do contexto (RAN/core protect, se disponíveis).
+6. Ordena o resultado final e devolve o jogo.
 
 ## Aprendizado
 
@@ -38,3 +39,6 @@ O cérebro mantém um estado persistente (cerebro_estado) com estatísticas por 
 - `top_hits`: quantas vezes gerou jogos com 14+ acertos.
 - `best_hits`: quantas vezes gerou jogos com 13+ acertos.
 - `avg_score`: média dos pontos para jogos do padrão.
+
+Na geração, o peso do padrão aumenta conforme `top_hits`, `best_hits` e `avg_score`,
+mantendo exploração controlada para padrões novos.
