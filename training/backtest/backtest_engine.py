@@ -396,7 +396,7 @@ def run_one_concurso(
     tentativa = 1
 
     def _process(cands: List[Dict[str, Any]], tipo: int):
-        nonlocal mem, a14, a15, tentativa
+        nonlocal mem, a14, a15, tentativa, acertos_max
 
         tipo = int(tipo)
 
