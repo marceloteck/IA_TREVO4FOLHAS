@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Trevo 4 Folhas | Sistema Inteligente para Jogos</title>
+    <link rel="stylesheet" href="styles.css" />
+    <link
+      rel="preconnect"
+      href="https://fonts.googleapis.com"
+    />
+    <link
+      rel="preconnect"
+      href="https://fonts.gstatic.com"
+      crossorigin
+    />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Manrope:wght@300;400;500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
+  </head>
+  <body>
+    <header class="header">
+      <nav class="nav">
+        <div class="brand">
+          <span class="brand__icon">🍀</span>
+          <span class="brand__name">Trevo 4 Folhas</span>
+        </div>
+        <ul class="nav__links">
+          <li><a href="#como-funciona">Como funciona</a></li>
+          <li><a href="#recursos">Recursos</a></li>
+          <li><a href="#planos">Planos</a></li>
+          <li><a href="#faq">FAQ</a></li>
+        </ul>
+        <a class="button button--ghost" href="#cta">Solicitar demo</a>
+      </nav>
+      <section class="hero">
+        <div class="hero__content">
+          <p class="hero__tag">Sistema completo para criação de jogos inteligentes</p>
+          <h1>
+            Transforme dados em decisões certeiras e jogue com estratégia,
+            orçamento e controle total.
+          </h1>
+          <p class="hero__subtitle">
+            O Trevo 4 Folhas reúne geração de jogos, listas organizadas, contagem
+            de acertos e estratégias personalizadas em um sistema Laravel + Vue.js
+            pronto para escalar com você.
+          </p>
+          <div class="hero__actions">
+            <a class="button button--primary" href="#planos">Quero começar agora</a>
+            <a class="button button--secondary" href="#recursos">Ver recursos</a>
+          </div>
+          <div class="hero__stats">
+            <div>
+              <strong>+1200</strong>
+              <span>combinações geradas/dia</span>
+            </div>
+            <div>
+              <strong>98%</strong>
+              <span>de precisão em contagens</span>
+            </div>
+            <div>
+              <strong>24/7</strong>
+              <span>monitoramento inteligente</span>
+            </div>
+          </div>
+        </div>
+        <div class="hero__card">
+          <div class="card">
+            <h3>Simulação rápida</h3>
+            <p>Veja como nosso sistema entrega valor em minutos.</p>
+            <ul>
+              <li>✅ Gere jogos em lote</li>
+              <li>✅ Escolha estratégia por orçamento</li>
+              <li>✅ Compare resultados automaticamente</li>
+              <li>✅ Exporte listas em segundos</li>
+            </ul>
+            <button class="button button--primary" type="button" id="simulate">
+              Simular geração
+            </button>
+            <div class="card__result" id="simulation-result">
+              Pronto para iniciar sua simulação.
+            </div>
+          </div>
+        </div>
+      </section>
+    </header>
+
+    <main>
+      <section class="section section--light" id="como-funciona">
+        <div class="section__intro">
+          <span class="section__tag">Como funciona</span>
+          <h2>Um fluxo simples para criar, organizar e acompanhar seus jogos</h2>
+          <p>
+            Você não precisa entender de estatística avançada. O Trevo 4 Folhas
+            guia cada etapa enquanto o sistema trabalha nos bastidores.
+          </p>
+        </div>
+        <div class="steps">
+          <article class="step">
+            <span>1</span>
+            <h3>Defina seu objetivo</h3>
+            <p>
+              Informe seu orçamento, quantidade de jogos e metas de acerto para
+              receber sugestões inteligentes.
+            </p>
+          </article>
+          <article class="step">
+            <span>2</span>
+            <h3>Selecione a estratégia</h3>
+            <p>
+              Escolha entre estratégias guiadas por dados históricos, tendências
+              ou personalização manual.
+            </p>
+          </article>
+          <article class="step">
+            <span>3</span>
+            <h3>Visualize resultados</h3>
+            <p>
+              Acompanhe relatórios, contagem de acertos e comparações em tempo real.
+            </p>
+          </article>
+        </div>
+      </section>
+
+      <section class="section" id="recursos">
+        <div class="section__intro">
+          <span class="section__tag">Recursos essenciais</span>
+          <h2>Uma plataforma completa para jogadores estratégicos</h2>
+          <p>
+            Toda a infraestrutura foi pensada para você gerar jogos melhores,
+            com eficiência e segurança.
+          </p>
+        </div>
+        <div class="features">
+          <article>
+            <h3>Gerador inteligente</h3>
+            <p>
+              Algoritmos que combinam probabilidades, histórico e filtros
+              personalizados para criar jogos poderosos.
+            </p>
+          </article>
+          <article>
+            <h3>Listas e exportações</h3>
+            <p>
+              Organize seus jogos em listas, compartilhe com sua equipe e
+              exporte para planilhas ou PDF.
+            </p>
+          </article>
+          <article>
+            <h3>Contagem de acertos</h3>
+            <p>
+              O sistema compara resultados automaticamente, exibindo acertos
+              por estratégia e por concurso.
+            </p>
+          </article>
+          <article>
+            <h3>Escolha por orçamento</h3>
+            <p>
+              Ajuste o investimento e deixe o sistema sugerir a melhor
+              estratégia sem ultrapassar seu limite.
+            </p>
+          </article>
+          <article>
+            <h3>Painéis em tempo real</h3>
+            <p>
+              Dashboards interativos desenvolvidos em Vue.js para decisões
+              rápidas e visuais claros.
+            </p>
+          </article>
+          <article>
+            <h3>Segurança e escalabilidade</h3>
+            <p>
+              Backend robusto em Laravel, com permissões granulares e backups
+              automáticos.
+            </p>
+          </article>
+        </div>
+      </section>
+
+      <section class="section section--gradient">
+        <div class="highlight">
+          <div>
+            <h2>Sua operação otimizada em um só lugar</h2>
+            <p>
+              Com o Trevo 4 Folhas você centraliza estratégias, jogos e relatórios,
+              evitando planilhas soltas e decisões no escuro.
+            </p>
+          </div>
+          <div class="highlight__cards">
+            <div>
+              <strong>+35%</strong>
+              <span>mais consistência nos jogos</span>
+            </div>
+            <div>
+              <strong>2x</strong>
+              <span>mais rapidez para gerar listas</span>
+            </div>
+            <div>
+              <strong>0</strong>
+              <span>erros manuais na contagem</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="planos">
+        <div class="section__intro">
+          <span class="section__tag">Planos</span>
+          <h2>Escolha o plano ideal para sua operação</h2>
+          <p>
+            Comece pequeno e evolua conforme sua estratégia cresce.
+          </p>
+        </div>
+        <div class="pricing">
+          <article class="price-card">
+            <h3>Essencial</h3>
+            <p class="price">R$ 97<span>/mês</span></p>
+            <ul>
+              <li>Geração de jogos inteligentes</li>
+              <li>Listas básicas e exportações</li>
+              <li>Relatórios mensais</li>
+              <li>Suporte via e-mail</li>
+            </ul>
+            <a class="button button--secondary" href="#cta">Começar teste</a>
+          </article>
+          <article class="price-card price-card--featured">
+            <div class="badge">Mais escolhido</div>
+            <h3>Profissional</h3>
+            <p class="price">R$ 197<span>/mês</span></p>
+            <ul>
+              <li>Todas as estratégias premium</li>
+              <li>Dashboards em tempo real</li>
+              <li>Contagem automática detalhada</li>
+              <li>Suporte via WhatsApp</li>
+            </ul>
+            <a class="button button--primary" href="#cta">Quero este plano</a>
+          </article>
+          <article class="price-card">
+            <h3>Enterprise</h3>
+            <p class="price">Sob consulta</p>
+            <ul>
+              <li>Ambiente dedicado</li>
+              <li>Integrações personalizadas</li>
+              <li>Treinamento da equipe</li>
+              <li>Suporte premium 24/7</li>
+            </ul>
+            <a class="button button--secondary" href="#cta">Falar com especialista</a>
+          </article>
+        </div>
+      </section>
+
+      <section class="section section--light">
+        <div class="section__intro">
+          <span class="section__tag">Depoimentos</span>
+          <h2>Quem usa, recomenda</h2>
+          <p>Resultados reais de clientes que decidiram evoluir.</p>
+        </div>
+        <div class="testimonials" id="testimonials">
+          <article class="testimonial is-active">
+            <p>
+              “O Trevo 4 Folhas mudou nosso fluxo. Hoje geramos jogos com
+              segurança e temos um histórico completo.”
+            </p>
+            <span>Juliana Carvalho · Operadora de jogos</span>
+          </article>
+          <article class="testimonial">
+            <p>
+              “A funcionalidade de orçamento evita exageros. Planejamos nossos
+              investimentos com tranquilidade.”
+            </p>
+            <span>Felipe Andrade · Analista</span>
+          </article>
+          <article class="testimonial">
+            <p>
+              “Os dashboards são o diferencial. Os números ficam claros e a equipe
+              ganha agilidade nas decisões.”
+            </p>
+            <span>Larissa Monteiro · Gestora</span>
+          </article>
+        </div>
+      </section>
+
+      <section class="section" id="faq">
+        <div class="section__intro">
+          <span class="section__tag">Dúvidas frequentes</span>
+          <h2>Respostas para as perguntas mais comuns</h2>
+        </div>
+        <div class="faq">
+          <button class="faq__item">
+            <span>Preciso instalar algo para usar o sistema?</span>
+            <span class="faq__icon">+</span>
+          </button>
+          <div class="faq__content">
+            Não. O Trevo 4 Folhas funciona em nuvem e também pode ser instalado no
+            seu servidor local com suporte do nosso time.
+          </div>
+
+          <button class="faq__item">
+            <span>Posso importar meus dados históricos?</span>
+            <span class="faq__icon">+</span>
+          </button>
+          <div class="faq__content">
+            Sim. Aceitamos planilhas e bases já existentes para enriquecer seus
+            relatórios e gerar estratégias personalizadas.
+          </div>
+
+          <button class="faq__item">
+            <span>Como funciona o suporte?</span>
+            <span class="faq__icon">+</span>
+          </button>
+          <div class="faq__content">
+            Temos suporte por e-mail, WhatsApp e atendimento dedicado conforme o
+            plano escolhido.
+          </div>
+        </div>
+      </section>
+
+      <section class="section section--cta" id="cta">
+        <div class="cta">
+          <h2>Pronto para vender mais com um sistema que se vende sozinho?</h2>
+          <p>
+            Agende uma demonstração personalizada e descubra como o Trevo 4 Folhas
+            pode transformar sua operação.
+          </p>
+          <form class="cta__form">
+            <input type="text" placeholder="Seu nome" required />
+            <input type="email" placeholder="Seu e-mail" required />
+            <button class="button button--primary" type="submit">
+              Agendar demonstração
+            </button>
+          </form>
+          <p class="cta__note">
+            Ao enviar, nossa equipe entra em contato em até 24h úteis.
+          </p>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <div>
+        <strong>Trevo 4 Folhas</strong>
+        <p>Uma plataforma completa para estratégias inteligentes.</p>
+      </div>
+      <div>
+        <span>Contato</span>
+        <p>contato@trevo4folhas.com.br</p>
+        <p>(11) 99999-0000</p>
+      </div>
+      <div>
+        <span>Acompanhe</span>
+        <p>Instagram · LinkedIn · YouTube</p>
+      </div>
+      <div class="footer__year">
+        © <span id="current-year"></span> Trevo 4 Folhas. Todos os direitos reservados.
+      </div>
+    </footer>
+
+    <script src="script.js"></script>
+  </body>
+</html>
