@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Estratégias | Trevo4Folhas</title>
+    <link rel="stylesheet" href="assets/styles.css" />
+  </head>
+  <body data-page="strategies">
+    <header>
+      <div class="container navbar">
+        <div class="logo">Trevo4Folhas</div>
+        <nav>
+          <a href="dashboard.html" data-nav="dashboard">Dashboard</a>
+          <a href="games.html" data-nav="games">Jogos</a>
+          <a href="strategies.html" data-nav="strategies">Estratégias</a>
+          <a href="reports.html" data-nav="reports">Financeiro</a>
+        </nav>
+        <button class="btn btn-outline" data-logout>Sair</button>
+      </div>
+    </header>
+
+    <main class="section">
+      <div class="container">
+        <div class="flex" style="justify-content: space-between; margin-bottom: 24px;">
+          <div>
+            <span class="badge">Planejamento estratégico</span>
+            <h2>Estratégias e metas mensais</h2>
+          </div>
+          <div class="notice">Organize o que funcionou e o que testar no próximo mês.</div>
+        </div>
+
+        <div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));">
+          <div class="card">
+            <h3>Registrar estratégia</h3>
+            <form class="form" data-strategy-form>
+              <label>
+                Nome da estratégia
+                <input type="text" name="name" required placeholder="Ex: Núcleos frequentes" />
+              </label>
+              <label>
+                Foco
+                <select name="focus" required>
+                  <option value="Acertos">Aumentar acertos</option>
+                  <option value="Diversidade">Diversidade de combinações</option>
+                  <option value="Economia">Redução de custo</option>
+                </select>
+              </label>
+              <label>
+                Descrição
+                <textarea name="description" placeholder="Descreva como você vai aplicar essa estratégia" required></textarea>
+              </label>
+              <button class="btn btn-primary" type="submit">Salvar estratégia</button>
+            </form>
+          </div>
+
+          <div class="card">
+            <h3>Planejamento mensal</h3>
+            <form class="form" data-plan-form>
+              <label>
+                Mês de referência
+                <input type="month" name="month" required />
+              </label>
+              <label>
+                Meta principal
+                <input type="text" name="goal" placeholder="Ex: chegar a 12 acertos" required />
+              </label>
+              <label>
+                Ações do mês
+                <textarea name="actions" placeholder="Liste os passos que serão executados" required></textarea>
+              </label>
+              <button class="btn btn-primary" type="submit">Salvar planejamento</button>
+            </form>
+          </div>
+        </div>
+
+        <section class="section">
+          <h3>Estratégias cadastradas</h3>
+          <div class="grid grid-3" data-strategy-list style="margin-top: 16px;"></div>
+        </section>
+
+        <section class="section">
+          <h3>Planos mensais</h3>
+          <div class="grid grid-3" data-plan-list style="margin-top: 16px;"></div>
+        </section>
+      </div>
+    </main>
+
+    <script src="assets/auth.js"></script>
+    <script src="assets/data.js"></script>
+    <script src="assets/app.js"></script>
+  </body>
+</html>
