@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Painel | Trevo4Folhas</title>
+    <link rel="stylesheet" href="assets/styles.css" />
+  </head>
+  <body data-page="dashboard">
+    <header>
+      <div class="container navbar">
+        <div class="logo">Trevo4Folhas</div>
+        <nav>
+          <a href="dashboard.html" data-nav="dashboard">Dashboard</a>
+          <a href="games.html" data-nav="games">Jogos</a>
+          <a href="strategies.html" data-nav="strategies">Estratégias</a>
+          <a href="reports.html" data-nav="reports">Financeiro</a>
+        </nav>
+        <button class="btn btn-outline" data-logout>Sair</button>
+      </div>
+    </header>
+
+    <main class="section">
+      <div class="container">
+        <div class="flex" style="justify-content: space-between; margin-bottom: 24px;">
+          <div>
+            <span class="badge">Área do assinante</span>
+            <h2>Olá, <span data-profile-name></span>!</h2>
+            <p class="helper" data-profile-email></p>
+          </div>
+          <div class="notice">Seus dados ficam organizados por usuário.</div>
+        </div>
+
+        <div class="grid grid-3">
+          <div class="card stat">
+            <span>Total de jogos</span>
+            <strong data-stat-games>0</strong>
+          </div>
+          <div class="card stat">
+            <span>Maior acerto</span>
+            <strong data-stat-best-hit>0 pontos</strong>
+          </div>
+          <div class="card stat">
+            <span>Saldo acumulado</span>
+            <strong data-stat-balance>R$ 0,00</strong>
+          </div>
+        </div>
+
+        <section class="section">
+          <div class="flex" style="justify-content: space-between;">
+            <h3>Últimos jogos cadastrados</h3>
+            <span class="chip">Média de acertos: <span data-stat-avg-hit>0</span></span>
+          </div>
+          <div class="grid" data-recent-games style="margin-top: 16px;"></div>
+        </section>
+      </div>
+    </main>
+
+    <script src="assets/auth.js"></script>
+    <script src="assets/data.js"></script>
+    <script src="assets/app.js"></script>
+  </body>
+</html>

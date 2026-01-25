@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Financeiro | Trevo4Folhas</title>
+    <link rel="stylesheet" href="assets/styles.css" />
+  </head>
+  <body data-page="reports">
+    <header>
+      <div class="container navbar">
+        <div class="logo">Trevo4Folhas</div>
+        <nav>
+          <a href="dashboard.html" data-nav="dashboard">Dashboard</a>
+          <a href="games.html" data-nav="games">Jogos</a>
+          <a href="strategies.html" data-nav="strategies">Estratégias</a>
+          <a href="reports.html" data-nav="reports">Financeiro</a>
+        </nav>
+        <button class="btn btn-outline" data-logout>Sair</button>
+      </div>
+    </header>
+
+    <main class="section">
+      <div class="container">
+        <div class="flex" style="justify-content: space-between; margin-bottom: 24px;">
+          <div>
+            <span class="badge">Controle financeiro</span>
+            <h2>Investimentos e prêmios</h2>
+          </div>
+          <div class="notice warning">Acompanhe o saldo mensal para decidir os próximos jogos.</div>
+        </div>
+
+        <div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));">
+          <div class="card">
+            <h3>Registrar gasto</h3>
+            <form class="form" data-expense-form>
+              <label>
+                Data
+                <input type="date" name="date" required />
+              </label>
+              <label>
+                Categoria
+                <select name="category" required>
+                  <option value="Cartelas">Cartelas</option>
+                  <option value="Assinatura">Assinatura</option>
+                  <option value="Ferramentas">Ferramentas</option>
+                </select>
+              </label>
+              <label>
+                Descrição
+                <input type="text" name="description" placeholder="Ex: 10 jogos do concurso" required />
+              </label>
+              <label>
+                Valor (R$)
+                <input type="number" name="amount" min="0" step="0.01" required />
+              </label>
+              <button class="btn btn-primary" type="submit">Salvar gasto</button>
+            </form>
+          </div>
+
+          <div class="card">
+            <h3>Resumo financeiro</h3>
+            <div class="grid grid-3" data-report-stats style="margin-top: 16px;"></div>
+            <h4 style="margin-top: 24px;">Histórico de investimentos</h4>
+            <table class="table">
+              <thead>
+                <tr>
+                  <th>Data</th>
+                  <th>Categoria</th>
+                  <th>Descrição</th>
+                  <th>Valor</th>
+                </tr>
+              </thead>
+              <tbody data-expense-list></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <script src="assets/auth.js"></script>
+    <script src="assets/data.js"></script>
+    <script src="assets/app.js"></script>
+  </body>
+</html>

@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Jogos | Trevo4Folhas</title>
+    <link rel="stylesheet" href="assets/styles.css" />
+  </head>
+  <body data-page="games">
+    <header>
+      <div class="container navbar">
+        <div class="logo">Trevo4Folhas</div>
+        <nav>
+          <a href="dashboard.html" data-nav="dashboard">Dashboard</a>
+          <a href="games.html" data-nav="games">Jogos</a>
+          <a href="strategies.html" data-nav="strategies">Estratégias</a>
+          <a href="reports.html" data-nav="reports">Financeiro</a>
+        </nav>
+        <button class="btn btn-outline" data-logout>Sair</button>
+      </div>
+    </header>
+
+    <main class="section">
+      <div class="container">
+        <div class="flex" style="justify-content: space-between; margin-bottom: 24px;">
+          <div>
+            <span class="badge">Gerencie seus jogos</span>
+            <h2>Cadastro de concursos e resultados</h2>
+          </div>
+          <div class="notice warning">Preencha dados completos para análises precisas.</div>
+        </div>
+
+        <div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));">
+          <form class="card form" data-game-form>
+            <label>
+              Data do jogo
+              <input type="date" name="date" required />
+            </label>
+            <label>
+              Nome do jogo
+              <input type="text" name="title" placeholder="Ex: Lotofácil 15 dezenas" required />
+            </label>
+            <label>
+              Concurso
+              <input type="text" name="contest" placeholder="Ex: Concurso 3050" required />
+            </label>
+            <label>
+              Números jogados
+              <input type="text" name="numbers" placeholder="01, 02, 05..." required />
+            </label>
+            <label>
+              Acertos
+              <input type="number" name="hits" min="0" max="15" required />
+            </label>
+            <label>
+              Números faltantes
+              <input type="text" name="missed" placeholder="Ex: 03, 12" required />
+            </label>
+            <label>
+              Prêmio recebido (R$)
+              <input type="number" name="prize" min="0" step="0.01" />
+            </label>
+            <label>
+              Observações
+              <textarea name="notes" placeholder="Descreva o contexto do jogo"></textarea>
+            </label>
+            <button class="btn btn-primary" type="submit">Salvar jogo</button>
+          </form>
+
+          <div class="card">
+            <h3>Histórico de jogos</h3>
+            <p class="helper">Confira rapidamente os concursos registrados.</p>
+            <table class="table">
+              <thead>
+                <tr>
+                  <th>Data</th>
+                  <th>Jogo</th>
+                  <th>Concurso</th>
+                  <th>Acertos</th>
+                  <th>Prêmio</th>
+                  <th>Faltaram</th>
+                </tr>
+              </thead>
+              <tbody data-games-table></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <script src="assets/auth.js"></script>
+    <script src="assets/data.js"></script>
+    <script src="assets/app.js"></script>
+  </body>
+</html>

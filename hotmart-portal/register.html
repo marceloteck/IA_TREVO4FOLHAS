@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Criar Conta | Trevo4Folhas</title>
+    <link rel="stylesheet" href="assets/styles.css" />
+  </head>
+  <body data-page="register">
+    <header>
+      <div class="container navbar">
+        <div class="logo">Trevo4Folhas</div>
+        <nav>
+          <a href="index.html" data-nav="home">Início</a>
+          <a href="login.html" data-nav="login">Login</a>
+          <a href="register.html" class="active" data-nav="register">Criar conta</a>
+        </nav>
+        <a class="btn btn-outline" href="login.html">Já tenho conta</a>
+      </div>
+    </header>
+
+    <main class="section">
+      <div class="container" style="max-width: 560px;">
+        <div class="card">
+          <h2>Comece sua jornada</h2>
+          <p class="helper">Crie acesso para gerenciar seus jogos e resultados.</p>
+          <form class="form" data-register-form>
+            <label>
+              Nome completo
+              <input type="text" id="register-name" required placeholder="Seu nome" />
+            </label>
+            <label>
+              E-mail
+              <input type="email" id="register-email" required placeholder="voce@email.com" />
+            </label>
+            <label>
+              Senha
+              <input type="password" id="register-password" required placeholder="Crie uma senha forte" />
+            </label>
+            <p class="notice warning" data-message>Use um e-mail válido para acessar a plataforma.</p>
+            <button class="btn btn-primary" type="submit">Criar conta</button>
+          </form>
+          <p class="helper" style="margin-top: 16px;">
+            Já possui acesso? <a href="login.html"><strong>Entrar agora</strong></a>.
+          </p>
+        </div>
+      </div>
+    </main>
+
+    <script src="assets/auth.js"></script>
+    <script src="assets/data.js"></script>
+    <script src="assets/app.js"></script>
+  </body>
+</html>
