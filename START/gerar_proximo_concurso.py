@@ -660,6 +660,7 @@ def generate_for_size(
                 f"fonte={item['brain_id']}"
             )
             lines.append("")
+            
 
     lines.append("Observação importante:")
     lines.append("- Loteria é aleatória. Este ranking só prioriza candidatos segundo o aprendizado do sistema.")
