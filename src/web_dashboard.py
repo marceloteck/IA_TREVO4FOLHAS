@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import random
 import subprocess
 import threading
 from dataclasses import dataclass, field
@@ -19,6 +20,20 @@ import sqlite3
 from flask import Flask, jsonify, redirect, render_template, request, send_file, url_for
 
 from data.BD.connection import get_conn
+from training.core.brain_hub import BrainHub
+from training.fechamentos.auto_select import AutoSelectConfig, pick_pool_and_fixed
+from training.fechamentos.brain_adapter import register_all_brains
+from training.fechamentos.context import build_context
+from training.fechamentos.export import to_json as fechamento_to_json
+from training.fechamentos.generator import generate_fechamento
+from training.fechamentos.registry import get_spec
+from training.fechamentos_posicionais.auto_select import AutoSelectConfig as PosAutoSelectConfig, pick_pool_and_fixed as pick_pool_and_fixed_pos
+from training.fechamentos_posicionais.brain_adapter import register_all_brains as register_all_brains_pos
+from training.fechamentos_posicionais.context import build_context as build_context_pos
+from training.fechamentos_posicionais.export import to_json as fechamento_pos_to_json
+from training.fechamentos_posicionais.generator import generate_fechamento as generate_fechamento_pos
+from training.fechamentos_posicionais.grouping import plan_groups as plan_groups_pos
+from training.fechamentos_posicionais.registry import get_spec as get_spec_pos
 
 
 app = Flask(__name__, template_folder="templates", static_folder="static")
@@ -473,6 +488,105 @@ def gerar_jogos():
 
     start_background_task("gerar_jogos", cmd, "gerar_jogos.log", args)
     return redirect(url_for("index"))
+
+
+@app.route("/api/fechamento/gerar", methods=["POST"])
+def api_gerar_fechamento():
+    payload = request.get_json(silent=True) or {}
+    code = str(payload.get("code", "")).strip().upper()
+    if not code:
+        return jsonify({"error": "code obrigatório"}), 400
+
+    qtd = int(payload.get("qtd", 1))
+    seed = payload.get("seed")
+    seed = int(seed) if seed is not None else None
+
+    db_path = get_db_path()
+    if not db_path.exists():
+        return jsonify({"error": "Banco não encontrado. Rode START/startBD.py."}), 400
+
+    with get_conn(str(db_path)) as conn:
+        context = build_context(conn)
+        hub = BrainHub(conn)
+        register_all_brains(conn, hub)
+        hub.load_all()
+
+        spec = get_spec(code)
+        results = []
+        for idx in range(qtd):
+            rng_seed = seed + idx if seed is not None else None
+            rng = random.Random(rng_seed)
+            pool, fixed, meta = pick_pool_and_fixed(spec, hub, context, rng, AutoSelectConfig())
+            result = generate_fechamento(
+                spec,
+                pool,
+                fixed,
+                hub,
+                context=context,
+                rng=rng,
+                selection_metadata=meta,
+            )
+            results.append(fechamento_to_json(result))
+
+    return jsonify(
+        {
+            "status": "ok",
+            "message": "garantia declarada do fechamento (modelo combinatório); produto estatístico; loteria é aleatória; não há garantia de prêmio",
+            "data": results,
+        }
+    )
+
+
+@app.route("/api/fechamento-posicional/gerar", methods=["POST"])
+def api_gerar_fechamento_posicional():
+    payload = request.get_json(silent=True) or {}
+    code = str(payload.get("code", "")).strip().upper()
+    if not code:
+        return jsonify({"error": "code obrigatório"}), 400
+
+    qtd = int(payload.get("qtd", 1))
+    seed = payload.get("seed")
+    seed = int(seed) if seed is not None else None
+
+    db_path = get_db_path()
+    if not db_path.exists():
+        return jsonify({"error": "Banco não encontrado. Rode START/startBD.py."}), 400
+
+    with get_conn(str(db_path)) as conn:
+        context = build_context_pos(conn)
+        hub = BrainHub(conn)
+        register_all_brains_pos(conn, hub)
+        hub.load_all()
+
+        spec = get_spec_pos(code)
+        results = []
+        for idx in range(qtd):
+            rng_seed = seed + idx if seed is not None else None
+            rng = random.Random(rng_seed)
+            pool, fixed, meta = pick_pool_and_fixed_pos(spec, hub, context, rng, PosAutoSelectConfig())
+            group_plan = plan_groups_pos(spec, pool, fixed, hub, context, rng)
+            result = generate_fechamento_pos(
+                spec,
+                pool,
+                fixed,
+                group_plan.groups,
+                hub,
+                context=context,
+                rng=rng,
+                selection_metadata={**meta, **{\"groups\": group_plan.metadata}},
+            )
+            results.append(fechamento_pos_to_json(result))
+
+    return jsonify(
+        {
+            "status": "ok",
+            "message": (
+                "garantia declarada do fechamento (modelo combinatório); produto estatístico e informativo; "
+                "loterias envolvem aleatoriedade; não existe garantia de prêmio"
+            ),
+            "data": results,
+        }
+    )
 
 
 @app.route("/gerar-relatorio", methods=["POST"])
