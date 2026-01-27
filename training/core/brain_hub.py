@@ -30,6 +30,7 @@ class BrainHub:
         db_conn,
         exploration_rate: float = 0.08,
         max_brain_share: float = 0.4,
+        high_hit_focus: float = 0.0,
         quota_enabled: bool = False,
         quota_max_per_brain: int = 0,
         consensus_enabled: bool = False,
@@ -42,6 +43,7 @@ class BrainHub:
 
         self.exploration_rate = max(0.0, min(0.25, float(exploration_rate)))
         self.max_brain_share = max(0.1, min(0.7, float(max_brain_share)))
+        self.high_hit_focus = max(0.0, min(0.5, float(high_hit_focus)))
 
         self.quota_enabled = bool(quota_enabled)
         self.quota_max_per_brain = max(0, int(quota_max_per_brain))
@@ -64,6 +66,17 @@ class BrainHub:
         bonus = (q14 * 0.6 + q15 * 1.2) / float(usos)
         peso = 1.0 + (media / 15.0) * 0.15 + bonus * 0.25
         return max(0.85, min(1.25, peso))
+
+    def _high_hit_rate(self, brain_id: str) -> float:
+        meta = self.meta.get(brain_id)
+        if not meta:
+            return 0.0
+
+        usos = max(1, int(meta.get("usos", 0)))
+        q14 = int(meta.get("q14", 0))
+        q15 = int(meta.get("q15", 0))
+        rate = (q14 + (2 * q15)) / float(usos)
+        return max(0.0, min(1.0, rate))
 
     def register(self, brain: BrainInterface) -> None:
         self.brains.append(brain)
@@ -128,6 +141,10 @@ class BrainHub:
 
             noise = random.uniform(0.0, self.exploration_rate)
             score = calibrated * (1.0 - self.exploration_rate) + noise
+
+            if int(size) == 15 and self.high_hit_focus > 0.0:
+                high_hit_rate = self._high_hit_rate(str(c["brain_id"]))
+                score += float(self.high_hit_focus) * float(high_hit_rate)
 
             if self.consensus_enabled:
                 votes = len(votes_map.get(tuple(c["jogo"]), set()))
