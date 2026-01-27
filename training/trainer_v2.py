@@ -43,6 +43,7 @@ AVALIAR_TOP_K = 40                   # quantos avaliar por tamanho (custo contro
 SALVAR_MEMORIA_MIN = 12              # salva memoria_jogos a partir de 11 acertos
 PERSISTIR_A_CADA = 5                 # salva estados + checkpoint a cada X concursos
 SCORE_TAG = "trainer_v2_hub"         # tag para auditoria
+HIGH_HIT_FOCUS_15 = 0.06             # bônus extra para cérebros com histórico 14/15 (apenas size=15)
 
 
 # ==========================
@@ -344,6 +345,7 @@ def treinar_pendencias(
     limite_concursos: Optional[int] = None,
     exploration_rate: Optional[float] = None,
     max_brain_share: Optional[float] = None,
+    high_hit_focus: Optional[float] = None,
     quota_enabled: Optional[bool] = None,
     quota_max_per_brain: Optional[int] = None,
     consensus_enabled: Optional[bool] = None,
@@ -383,6 +385,9 @@ def treinar_pendencias(
         hub_kwargs["exploration_rate"] = float(exploration_rate)
     if max_brain_share is not None:
         hub_kwargs["max_brain_share"] = float(max_brain_share)
+    if high_hit_focus is None:
+        high_hit_focus = float(HIGH_HIT_FOCUS_15)
+    hub_kwargs["high_hit_focus"] = float(high_hit_focus)
     if quota_enabled is not None:
         hub_kwargs["quota_enabled"] = bool(quota_enabled)
     if quota_max_per_brain is not None:
@@ -566,6 +571,7 @@ def run(
     limite_concursos: Optional[int],
     exploration_rate: Optional[float],
     max_brain_share: Optional[float],
+    high_hit_focus: Optional[float],
     quota_enabled: Optional[bool],
     quota_max_per_brain: Optional[int],
     consensus_enabled: Optional[bool],
@@ -590,6 +596,7 @@ def run(
                 limite_concursos=limite_concursos,
                 exploration_rate=exploration_rate,
                 max_brain_share=max_brain_share,
+                high_hit_focus=high_hit_focus,
                 quota_enabled=quota_enabled,
                 quota_max_per_brain=quota_max_per_brain,
                 consensus_enabled=consensus_enabled,
@@ -625,6 +632,12 @@ def main() -> None:
 
     parser.add_argument("--exploration-rate", type=float, default=None, help="Exploração do BrainHub (opcional).")
     parser.add_argument("--max-brain-share", type=float, default=None, help="Limite por cérebro no BrainHub (opcional).")
+    parser.add_argument(
+        "--high-hit-focus",
+        type=float,
+        default=None,
+        help="Bônus extra para cérebros com histórico 14/15 (apenas size=15).",
+    )
 
     parser.add_argument("--quota-enabled", action="store_true", help="Ativar quota por cérebro no Top N.")
     parser.add_argument("--quota-max-per-brain", type=int, default=0, help="Limite absoluto por cérebro no Top N.")
@@ -652,6 +665,7 @@ def main() -> None:
         limite_concursos=args.limite,
         exploration_rate=args.exploration_rate,
         max_brain_share=args.max_brain_share,
+        high_hit_focus=args.high_hit_focus,
         quota_enabled=bool(args.quota_enabled),
         quota_max_per_brain=max(0, int(args.quota_max_per_brain)),
         consensus_enabled=bool(args.consensus_enabled),
