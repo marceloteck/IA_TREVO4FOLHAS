@@ -7,9 +7,13 @@ allow pasting
 E depois usar pra automatizar os jogos no site na LOTERIA CAIXA
 
 ```
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
 // Lista de jogos (adicione mais se quiser)
 let jogos = [
-[1, 2, 4, 5, 6, 7, 9, 12, 13, 15, 17, 20, 21, 22, 23]
+[1, 2, 4, 5, 6, 7, 9, 12, 13, 17, 18, 20, 21, 22, 24],
+[1, 4, 5, 6, 7, 9, 10, 12, 13, 15, 16, 17, 18, 20, 21],
+[1, 4, 5, 6, 7, 9, 12, 13, 14, 17, 18, 20, 21, 22, 23]
 ];
 
 async function jogarAutomatico(jogos) {
@@ -60,7 +64,7 @@ async function jogarAutomatico(jogos) {
 // Executa automaticamente
 jogarAutomatico(jogos);
 
-
+////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 ```
 
 AGORA PRA AUTOMATIZAR NO SITE DA LOTOSPOT
