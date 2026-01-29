@@ -34,7 +34,7 @@ echo [INFO] max_sim  : %MAX_SIM%
 echo.
 
 echo [RUN] Gerando jogos (15 e 18) e salvando no banco...
-python "START\gerar_proximo_concurso.py" --size 15 --qtd 12455 --second-size 18 --second-qtd 2 --perfil %PERFIL% --janela %JANELA% --per-brain %PER_BRAIN% --top-n %TOP_N% --max-sim %MAX_SIM% --salvar-db
+python "START\gerar_proximo_concurso.py" --size 15 --qtd 3 --second-size 18 --second-qtd 2 --perfil %PERFIL% --janela %JANELA% --per-brain %PER_BRAIN% --top-n %TOP_N% --max-sim %MAX_SIM% --salvar-db
 
 if errorlevel 1 (
   echo.
