@@ -24,7 +24,7 @@ from training.fechamentos.brain_adapter import register_all_brains
 from training.fechamentos.context import build_context
 from training.fechamentos.export import to_json, to_txt
 from training.fechamentos.generator import generate_fechamento
-from training.fechamentos.registry import get_spec
+from training.fechamentos.registry import get_spec, list_specs
 
 
 def _get_conn() -> sqlite3.Connection:
@@ -44,15 +44,28 @@ def _write_output(path: Path, content: str) -> None:
     path.write_text(content, encoding="utf-8")
 
 
+def _print_available_specs() -> None:
+    print("Fechamentos disponíveis:")
+    for spec in list_specs():
+        print(f"- {spec.code}: {spec.name}")
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = argparse.ArgumentParser(description="Gerar fechamento automático (sem escolha manual)")
-    parser.add_argument("--code", required=True, help="Código do fechamento (ex: FC44)")
+    parser.add_argument("--code", help="Código do fechamento (ex: FC44)")
+    parser.add_argument("--list", action="store_true", help="Listar fechamentos disponíveis")
     parser.add_argument("--qtd", type=int, default=1, help="Quantidade de rodadas")
     parser.add_argument("--seed", type=int, default=None, help="Seed para reprodutibilidade")
     parser.add_argument("--date", help="Data base do concurso (YYYY-MM-DD)")
     parser.add_argument("--out", help="Salvar JSON em arquivo")
     parser.add_argument("--out-txt", help="Salvar TXT em arquivo")
     args = parser.parse_args(argv)
+
+    if args.list or not args.code:
+        _print_available_specs()
+        if not args.list:
+            print("\nInforme o código desejado usando --code.")
+        return 0
 
     if args.date:
         try:
