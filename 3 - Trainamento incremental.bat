@@ -18,6 +18,6 @@ echo.
 echo.
 
 python -m training.trainer_v2
-python -m training.backtest.backtest_engine --hours 5 --block-size 250 --min-mem 13 --aggressive
+python -m training.backtest.backtest_engine --hours 5 --block-size 150 --min-mem 11 --aggressive
 
 pause
