@@ -159,3 +159,36 @@ CREATE TABLE IF NOT EXISTS logs_execucao (
     duracao REAL,
     timestamp TEXT
 );
+
+-- =====================================================
+-- 12) EXPERIMENTOS (A/B E VERSIONAMENTO)
+-- =====================================================
+CREATE TABLE IF NOT EXISTS experimentos (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    nome TEXT NOT NULL,
+    tipo TEXT,
+    commit_sha TEXT,
+    config_json TEXT,
+    status TEXT DEFAULT 'running',
+    inicio_concurso INTEGER,
+    fim_concurso INTEGER,
+    iniciado_em TEXT,
+    finalizado_em TEXT,
+    observacao TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_experimentos_nome ON experimentos(nome);
+
+CREATE TABLE IF NOT EXISTS experimentos_resultados (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    experimento_id INTEGER NOT NULL,
+    brain_id TEXT NOT NULL,
+    jogos INTEGER DEFAULT 0,
+    media REAL DEFAULT 0,
+    q14 INTEGER DEFAULT 0,
+    q15 INTEGER DEFAULT 0,
+    q14_rate REAL DEFAULT 0,
+    q15_rate REAL DEFAULT 0,
+    criado_em TEXT,
+    FOREIGN KEY (experimento_id) REFERENCES experimentos(id)
+);
+CREATE INDEX IF NOT EXISTS idx_exp_result_exp ON experimentos_resultados(experimento_id);

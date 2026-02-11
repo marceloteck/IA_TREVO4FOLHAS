@@ -668,5 +668,101 @@ def build_heuristic_brains(db_conn) -> List[HeuristicPatternBrain]:
             version="v1",
             constraints={"prime_target": 6, "prime_tol": 1, "sum_range": (180, 220)},
         ),
+        # ---------------------------
+        # Variações "inteligentes" dos cérebros mais assertivos
+        # (foco em padrões que já mostraram 15 pontos)
+        # ---------------------------
+        HeuristicConfig(
+            brain_id="heur_prime7_run4_sum185_225_v2",
+            name="Heurística Prime 7 + Run 4 + Soma 185-225 (v2)",
+            category="heuristico",
+            version="v2",
+            constraints={"prime_target": 7, "prime_tol": 1, "max_run": 4, "sum_range": (185, 225)},
+            recent_bias=0.75,
+            max_attempts=260,
+        ),
+        HeuristicConfig(
+            brain_id="heur_repeat9_even8_sum180_220_v2",
+            name="Heurística Repetidas 9 + Paridade 8 + Soma 180-220 (v2)",
+            category="heuristico",
+            version="v2",
+            constraints={"repeat_target": 9, "repeat_tol": 1, "even_target": 8, "even_tol": 1, "sum_range": (180, 220)},
+            recent_bias=0.78,
+            max_attempts=260,
+        ),
+        HeuristicConfig(
+            brain_id="heur_even7_row4_prime6_v2",
+            name="Heurística Even 7 + Row 4 + Prime 6 (v2)",
+            category="heuristico",
+            version="v2",
+            constraints={"even_target": 7, "even_tol": 1, "row_cap": 4, "prime_target": 6, "prime_tol": 1},
+            recent_bias=0.74,
+            max_attempts=230,
+        ),
+        HeuristicConfig(
+            brain_id="heur_mult3_4_fib3_run4_v2",
+            name="Heurística Mult3 4 + Fib 3 + Run 4 (v2)",
+            category="heuristico",
+            version="v2",
+            constraints={"mult3_target": 4, "mult3_tol": 1, "fib_target": 3, "fib_tol": 1, "max_run": 4},
+            recent_bias=0.72,
+            max_attempts=230,
+        ),
+        HeuristicConfig(
+            brain_id="heur_moldura11_prime6_sum180_220_v2",
+            name="Heurística Moldura 11 + Prime 6 + Soma 180-220 (v2)",
+            category="heuristico",
+            version="v2",
+            constraints={"moldura_target": 11, "moldura_tol": 1, "prime_target": 6, "prime_tol": 1, "sum_range": (180, 220)},
+            recent_bias=0.76,
+            max_attempts=250,
+        ),
+        HeuristicConfig(
+            brain_id="heur_prime6_sum180_220_run4_v2",
+            name="Heurística Prime 6 + Soma 180-220 + Run 4 (v2)",
+            category="heuristico",
+            version="v2",
+            constraints={"prime_target": 6, "prime_tol": 1, "sum_range": (180, 220), "max_run": 4},
+            recent_bias=0.73,
+            max_attempts=240,
+        ),
+        HeuristicConfig(
+            brain_id="heur_even8_sum185_225_col4_v2",
+            name="Heurística Even 8 + Soma 185-225 + Col 4 (v2)",
+            category="heuristico",
+            version="v2",
+            constraints={"even_target": 8, "even_tol": 1, "sum_range": (185, 225), "col_cap": 4},
+            recent_bias=0.75,
+            max_attempts=240,
+        ),
+        HeuristicConfig(
+            brain_id="heur_core_mix_repeat9_prime7_v2",
+            name="Heurística Core Mix Repeat 9 + Prime 7 (v2)",
+            category="heuristico",
+            version="v2",
+            constraints={"repeat_target": 9, "repeat_tol": 1, "prime_target": 7, "prime_tol": 1, "sum_range": (180, 230)},
+            recent_bias=0.80,
+            max_attempts=280,
+        ),
+        # Teoria popular de loterias (internet): balancear dezenas "quentes" e "frias"
+        # Estratégia prática aqui:
+        # - recent_bias menor para dar mais espaço às dezenas menos recentes,
+        # - com restrições leves para manter forma estatística estável.
+        HeuristicConfig(
+            brain_id="heur_hotcold_balance_v1",
+            name="Heurística Hot/Cold Balance (v1)",
+            category="heuristico",
+            version="v1",
+            constraints={
+                "even_target": 8,
+                "even_tol": 1,
+                "sum_range": (180, 225),
+                "max_run": 5,
+                "repeat_target": 9,
+                "repeat_tol": 2,
+            },
+            recent_bias=0.45,
+            max_attempts=260,
+        ),
     ]
     return [HeuristicPatternBrain(db_conn, cfg) for cfg in configs]

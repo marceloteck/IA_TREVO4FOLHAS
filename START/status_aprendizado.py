@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 import sys
 import sqlite3
+import json
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional
@@ -21,6 +22,8 @@ try:
 except Exception:
     # fallback seguro
     DB_PATH = ROOT / "data" / "BD" / "lotofacil.db"
+
+CFG_CICLO_PATH = ROOT / "config" / "ciclo_treino_avalia.json"
 
 
 def now_str() -> str:
@@ -68,6 +71,44 @@ def get_conn() -> sqlite3.Connection:
     return conn
 
 
+def ensure_governance_tables(conn: sqlite3.Connection) -> None:
+    """
+    Cria dinamicamente tabelas de governança/experimentos se não existirem,
+    sem impactar dados já existentes.
+    """
+    cur = conn.cursor()
+    cur.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS experimentos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            nome TEXT NOT NULL,
+            tipo TEXT,
+            commit_sha TEXT,
+            config_json TEXT,
+            status TEXT DEFAULT 'running',
+            inicio_concurso INTEGER,
+            fim_concurso INTEGER,
+            iniciado_em TEXT,
+            finalizado_em TEXT,
+            observacao TEXT
+        );
+        CREATE TABLE IF NOT EXISTS experimentos_resultados (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            experimento_id INTEGER NOT NULL,
+            brain_id TEXT NOT NULL,
+            jogos INTEGER DEFAULT 0,
+            media REAL DEFAULT 0,
+            q14 INTEGER DEFAULT 0,
+            q15 INTEGER DEFAULT 0,
+            q14_rate REAL DEFAULT 0,
+            q15_rate REAL DEFAULT 0,
+            criado_em TEXT
+        );
+        """
+    )
+    conn.commit()
+
+
 # ==========================
 # Queries (resumo geral)
 # ==========================
@@ -89,6 +130,15 @@ def print_header(title: str) -> None:
     print("=" * 70)
 
 
+def _load_json(path: Path) -> Optional[Dict]:
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
 def main() -> None:
     print_header("🧠 STATUS DE APRENDIZADO — IA_TREVO4FOLHAS (DB)")
 
@@ -103,6 +153,8 @@ def main() -> None:
 
     conn = get_conn()
     try:
+        ensure_governance_tables(conn)
+
         # Checagem mínima
         needed = ["concursos", "checkpoint", "tentativas", "memoria_jogos", "cerebros", "cerebro_estado", "cerebro_performance"]
         missing = [t for t in needed if not safe_table_exists(conn, t)]
@@ -289,6 +341,124 @@ def main() -> None:
                     print(f"  dezena {int(num):02d} -> qtd={fmt_int(qtd)} | peso={fmt_float(peso, 6)}")
         else:
             print("Tabela frequencias não existe. Rode START/startBD.py para criar/atualizar.")
+
+        # --------------------------
+        # 8) Parâmetros/config ativos (visão de tuning)
+        # --------------------------
+        print_header("8) PARÂMETROS E TUNING (CONFIG + TRAINER)")
+
+        cfg = _load_json(CFG_CICLO_PATH)
+        if cfg:
+            print(f"Arquivo de config detectado: {CFG_CICLO_PATH}")
+            print("Parâmetros de ciclo_treino_avalia.json:")
+            for k in sorted(cfg.keys()):
+                v = cfg.get(k)
+                print(f"  - {k}: {v}")
+        else:
+            print(f"Config não encontrada/ilegível: {CFG_CICLO_PATH}")
+
+        try:
+            import training.trainer_v2 as t2
+
+            print("\nDefaults do trainer_v2 carregados do código:")
+            defaults = {
+                "JANELA_RECENTE": getattr(t2, "JANELA_RECENTE", None),
+                "CANDIDATOS_POR_CEREBRO": getattr(t2, "CANDIDATOS_POR_CEREBRO", None),
+                "TOP_N_POR_TAMANHO": getattr(t2, "TOP_N_POR_TAMANHO", None),
+                "AVALIAR_TOP_K": getattr(t2, "AVALIAR_TOP_K", None),
+                "SALVAR_MEMORIA_MIN": getattr(t2, "SALVAR_MEMORIA_MIN", None),
+                "PERSISTIR_A_CADA": getattr(t2, "PERSISTIR_A_CADA", None),
+                "AUTO_DISABLE_MIN_GAMES": getattr(t2, "AUTO_DISABLE_MIN_GAMES", None),
+                "AUTO_DISABLE_KEEP_TOP_Q15": getattr(t2, "AUTO_DISABLE_KEEP_TOP_Q15", None),
+                "AUTO_DISABLE_KEEP_TOP_Q14": getattr(t2, "AUTO_DISABLE_KEEP_TOP_Q14", None),
+                "AUTO_DISABLE_RECENT_WINDOW": getattr(t2, "AUTO_DISABLE_RECENT_WINDOW", None),
+                "AUTO_DISABLE_RECENT_WEIGHT": getattr(t2, "AUTO_DISABLE_RECENT_WEIGHT", None),
+            }
+            for k, v in defaults.items():
+                print(f"  - {k}: {v}")
+        except Exception as e:
+            print(f"Não foi possível carregar defaults do trainer_v2: {e}")
+
+        # distribuição ON/OFF por categoria
+        dist_cat = q_all(
+            conn,
+            """
+            SELECT categoria,
+                   SUM(CASE WHEN habilitado=1 THEN 1 ELSE 0 END) AS on_count,
+                   COUNT(*) AS total
+            FROM cerebros
+            GROUP BY categoria
+            ORDER BY categoria
+            """,
+        )
+        if dist_cat:
+            print("\nDistribuição de cérebros por categoria:")
+            for cat, on_count, total in dist_cat:
+                off_count = int(total or 0) - int(on_count or 0)
+                print(f"  - {cat}: ON={fmt_int(on_count)} | OFF={fmt_int(off_count)} | TOTAL={fmt_int(total)}")
+
+        # --------------------------
+        # 9) Performance recente e governança de experimentos
+        # --------------------------
+        print_header("9) PERFORMANCE RECENTE + EXPERIMENTOS")
+
+        if safe_table_exists(conn, "cerebro_performance"):
+            mx = q_one(conn, "SELECT MAX(concurso) FROM cerebro_performance")
+            max_cp = int(mx[0]) if mx and mx[0] is not None else 0
+            if max_cp > 0:
+                janela_rec = 120
+                min_cp = max(1, max_cp - janela_rec + 1)
+                rec = q_all(
+                    conn,
+                    """
+                    SELECT c.brain_id,
+                           COALESCE(AVG(p.media_pontos),0) AS media,
+                           COALESCE(SUM(p.qtd_14),0) AS q14,
+                           COALESCE(SUM(p.qtd_15),0) AS q15,
+                           COALESCE(SUM(p.jogos_gerados),0) AS jogos
+                    FROM cerebro_performance p
+                    JOIN cerebros c ON c.id = p.cerebro_id
+                    WHERE p.concurso >= ?
+                    GROUP BY c.brain_id
+                    ORDER BY q15 DESC, q14 DESC, media DESC
+                    LIMIT 20
+                    """,
+                    (int(min_cp),),
+                )
+                if rec:
+                    print(f"Top cérebros recentes (últimos {janela_rec} concursos, até {max_cp}):")
+                    for bid, media, q14, q15, jogos in rec:
+                        print(
+                            f"  {bid:35s} | jogos={fmt_int(jogos)} | média={fmt_float(media)}"
+                            f" | 14+={fmt_int(q14)} | 15={fmt_int(q15)}"
+                        )
+
+        if safe_table_exists(conn, "experimentos"):
+            exp_total = q_one(conn, "SELECT COUNT(*) FROM experimentos")
+            exp_run = q_one(conn, "SELECT COUNT(*) FROM experimentos WHERE status='running'")
+            exp_done = q_one(conn, "SELECT COUNT(*) FROM experimentos WHERE status='done'")
+            print(f"Experimentos totais: {fmt_int(exp_total[0] if exp_total else 0)}")
+            print(f"Experimentos running: {fmt_int(exp_run[0] if exp_run else 0)}")
+            print(f"Experimentos done: {fmt_int(exp_done[0] if exp_done else 0)}")
+
+            last_exp = q_one(
+                conn,
+                """
+                SELECT id, nome, status, inicio_concurso, fim_concurso, iniciado_em, finalizado_em
+                FROM experimentos
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+            )
+            if last_exp:
+                print("Último experimento:")
+                print(
+                    f"  id={last_exp[0]} | nome={last_exp[1]} | status={last_exp[2]}"
+                    f" | range={fmt_int(last_exp[3])}..{fmt_int(last_exp[4])}"
+                )
+                print(f"  iniciado={last_exp[5] or '-'} | finalizado={last_exp[6] or '-'}")
+        else:
+            print("Tabela experimentos ainda não existe (será criada dinamicamente no treino/status).")
 
         print("\n✅ Status concluído.")
     finally:
