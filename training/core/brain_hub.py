@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 import random
-from typing import Any, Dict, List, Set, Tuple
+from typing import Any, Dict, List, Set, Tuple, Union
 
 from training.core.brain_interface import BrainInterface
 
@@ -36,6 +36,11 @@ class BrainHub:
         consensus_enabled: bool = False,
         consensus_bonus: float = 0.0,
         consensus_min_votes: int = 2,
+        strong_consensus_enabled: bool = False,
+        strong_consensus_bonus: float = 0.0,
+        collapse_penalty_enabled: bool = False,
+        collapse_penalty: float = 0.0,
+        collapse_votes_threshold: int = 5,
     ):
         self.db = db_conn
         self.brains: List[BrainInterface] = []
@@ -51,6 +56,12 @@ class BrainHub:
         self.consensus_enabled = bool(consensus_enabled)
         self.consensus_bonus = max(0.0, float(consensus_bonus))
         self.consensus_min_votes = max(2, int(consensus_min_votes))
+        self.strong_consensus_enabled = bool(strong_consensus_enabled)
+        self.strong_consensus_bonus = max(0.0, float(strong_consensus_bonus))
+
+        self.collapse_penalty_enabled = bool(collapse_penalty_enabled)
+        self.collapse_penalty = max(0.0, float(collapse_penalty))
+        self.collapse_votes_threshold = max(2, int(collapse_votes_threshold))
 
     def _meta_weight(self, brain_id: str) -> float:
         meta = self.meta.get(brain_id)
@@ -89,7 +100,7 @@ class BrainHub:
         for b in self.brains:
             b.save_state()
 
-    def generate_candidates(self, context: Dict[str, Any], size: int, per_brain: int) -> List[Dict[str, Any]]:
+    def generate_candidates(self, context: Dict[str, Any], size: int, per_brain: Union[int, Dict[str, int]]) -> List[Dict[str, Any]]:
         cand: List[Dict[str, Any]] = []
         raw_scores: Dict[str, List[float]] = defaultdict(list)
 
@@ -103,7 +114,11 @@ class BrainHub:
             if rel <= 0:
                 continue
 
-            jogos = b.generate(context=context, size=size, n=per_brain)
+            n_for_brain = int(per_brain.get(str(b.id), 0)) if isinstance(per_brain, dict) else int(per_brain)
+            if n_for_brain <= 0:
+                continue
+
+            jogos = b.generate(context=context, size=size, n=n_for_brain)
             for j in jogos:
                 jogo_sorted = tuple(sorted(j))
                 raw = float(b.score_game(j, context))
@@ -152,6 +167,17 @@ class BrainHub:
                 if votes >= self.consensus_min_votes:
                     score += self.consensus_bonus
 
+            if self.strong_consensus_enabled:
+                votes = len(votes_map.get(tuple(c["jogo"]), set()))
+                weighted_votes = sum(self._meta_weight(bid) for bid in votes_map.get(tuple(c["jogo"]), set()))
+                c["consensus_weighted_votes"] = float(weighted_votes)
+                score += self.strong_consensus_bonus * float(weighted_votes)
+
+            if self.collapse_penalty_enabled:
+                votes = len(votes_map.get(tuple(c["jogo"]), set()))
+                if votes >= self.collapse_votes_threshold:
+                    score -= self.collapse_penalty
+
             c["score"] = float(score)
 
         return cand
@@ -196,7 +222,7 @@ class BrainHub:
 
         return escolhidos[:top_n]
 
-    def generate_games(self, context: Dict[str, Any], size: int, per_brain: int, top_n: int) -> List[Dict[str, Any]]:
+    def generate_games(self, context: Dict[str, Any], size: int, per_brain: Union[int, Dict[str, int]], top_n: int) -> List[Dict[str, Any]]:
         candidatos = self.generate_candidates(context, size, per_brain)
 
         # diversidade mais rígida para 15, mais leve para 18
