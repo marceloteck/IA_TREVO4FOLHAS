@@ -6,6 +6,8 @@ IA incremental e multicérebro para análise estatística, aprendizado contínuo
 
 ## 📌 Visão geral
 
+📘 Mapa técnico para programadores: `README_MAPA_PROJETO.md`
+
 O sistema se organiza em três pilares principais:
 
 1. **Treinamento incremental (N → N+1)**: aprende a cada concurso novo, sem reprocessar todo o histórico.
@@ -118,6 +120,35 @@ Parâmetros úteis:
 - `--both` (gera jogos de 15 e 18 dezenas)
 - `--salvar-db` (registra os jogos no banco para conferência futura)
 
+### 3.1) Catálogo por cérebro (usuário final)
+
+Você pode gerar um catálogo com os **melhores cérebros por histórico 14/15**,
+listando os jogos por cérebro (ex.: `per_brain=80`) para o usuário escolher qual cérebro usar.
+
+```bash
+python START/gerar_proximo_concurso.py --por-cerebro --size 15 --per-brain 80 --top-brains 12
+```
+
+Gerar também um TXT separado por cérebro (melhor visualização):
+
+```bash
+python START/gerar_proximo_concurso.py --por-cerebro --por-cerebro-split-files --size 15 --per-brain 80 --top-brains 12
+```
+
+Selecionar cérebros específicos:
+
+```bash
+python START/gerar_proximo_concurso.py --por-cerebro --brain-id struct_core_protect --brain-id stat_elite_memory
+```
+
+Atalho Windows (.bat):
+
+```bat
+10 - gerar_catalogo_por_cerebro.bat
+```
+
+Ao finalizar, o script informa no terminal o **caminho completo** dos arquivos `.txt` gerados.
+
 ---
 
 ## 🧠 BrainHub e cérebros
@@ -138,6 +169,14 @@ Gerador estruturado baseado em **sequências de passos (delta sequences)**:
 - Permite mutação leve e exploração controlada.
 - Aprende estatísticas simples por padrão (ex.: hits 13+, 14+).
 
+### Cérebro experimental adicional: `heur_hotcold_balance_v1`
+
+Baseado na teoria popular de dezenas “quentes/frias”:
+
+- usa `recent_bias` mais baixo (aumenta chance de trazer dezenas menos recentes),
+- mantém forma estatística mínima (paridade, soma, repetição e limite de sequência),
+- objetivo: testar exploração sem quebrar estabilidade.
+
 Parâmetros adicionais do `trainer_v2.py`:
 
 ```
@@ -146,22 +185,83 @@ Parâmetros adicionais do `trainer_v2.py`:
 --steps-delta-max 3
 --steps-wrap-mode wrap
 --steps-max-attempts-per-game 50
+
+# auto-gestão de cérebros por performance
+--auto-disable-min-games 3000
+--auto-disable-keep-top-q15 20
+--auto-disable-keep-top-q14 20
+--auto-disable-recent-window 240
+--auto-disable-recent-weight 0.70
+# para desligar esse modo automático:
+--disable-auto-manage-brains
+
+# alocação dinâmica por cérebro (fase recente)
+--dynamic-per-brain
+--dynamic-per-brain-recent-window 180
+
+# consenso forte / anti-colapso (opcionais)
+--strong-consensus-enabled
+--strong-consensus-bonus 0.01
+--collapse-penalty-enabled
+--collapse-penalty 0.01
+--collapse-votes-threshold 5
+
+# versionamento de experimento (A/B)
+--experiment-name "ab_teste_brain_x_v1"
 ```
+
+### Auto-gestão de cérebros (temporária)
+
+Durante o treino, o `trainer_v2` pode ajustar a flag `habilitado` dos cérebros de forma automática:
+
+- mantém habilitados os cérebros com melhor histórico (top por `q15` e `q14`),
+- desabilita **temporariamente** cérebros com `q15=0` e volume alto de jogos,
+- preserva cérebros de baixo volume (novos) para não matar exploração cedo.
+
+Isso não remove cérebro algum do projeto; apenas alterna `ON/OFF` para priorizar assertividade.
+
+### Governança de banco (criação dinâmica segura)
+
+As tabelas de governança/experimentos são criadas com `CREATE TABLE IF NOT EXISTS`
+durante execução do treino/status, evitando quebrar bancos antigos e sem sobrescrever
+dados já existentes.
 
 ---
 
 ## 🔁 Backtest e exploração histórica
 
-Motor de backtest:
+Motor de backtest (atual):
 ```bash
 python -m training.backtest.backtest_engine --steps 100 --aggressive
 ```
 
-Parâmetros relevantes:
+Backtest inteligente separado (novo, sem alterar o atual):
+```bash
+python -m training.backtest.backtest_smart_engine --steps 120 --recent-window 220
+```
+
+Launcher Windows:
+```bat
+11 - backtest_smart.bat
+12 - backtest_super_inteligente.bat
+```
+
+Parâmetros relevantes do smart:
 - `--steps`: quantidade de concursos processados
-- `--hours` / `--minutes`: limite por tempo
+- `--minutes`: limite por tempo
+- `--recent-window`: janela para score temporal dos cérebros
+- `--ucb-c`: intensidade de exploração do seletor adaptativo (UCB) para cenários (arms)
+- `--recipe-ucb-c`: exploração do seletor adaptativo para receitas de cérebros
+- `--recipe-evolve-every`: cria automaticamente nova receita (mistura/mutação) a cada N passos
+- `--recipe-promote-reward`: limiar de promoção de receita
+- `--recipe-min-pulls`: testes mínimos antes de promover/parkear receita
+- `--revive-parked-every`: tenta reviver receitas parked quando o regime muda
+- `--reward-q15` / `--reward-q14`: pesos da função de recompensa multiobjetivo
 - `--avaliar-top-k`: número de candidatos avaliados por tamanho
-- `--aggressive`: aumenta exploração e candidatos por cérebro
+
+Obs.: o smart mantém o modelo `N -> N+1`, usa os cérebros existentes e agora evolui “receitas” automaticamente (mantém, promove, parkear, revive), detecta regime (`estavel/volatil/aquecido/frio`) e registra hipóteses em `backtest_smart_hypotheses`.
+
+Compatibilidade: o motor faz leitura tolerante de `cerebro_performance` para schemas legados (coluna `concurso`) e variantes antigas, evitando falha por ausência de `concurso_n`.
 
 ---
 

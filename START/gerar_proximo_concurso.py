@@ -41,6 +41,13 @@ def log(msg: str) -> None:
     print(f"[{now_str()}] {msg}")
 
 
+def abs_path_str(path: Path) -> str:
+    try:
+        return str(path.resolve())
+    except Exception:
+        return str(path)
+
+
 def jaccard(a: List[int], b: List[int]) -> float:
     sa, sb = set(a), set(b)
     inter = len(sa & sb)
@@ -258,19 +265,19 @@ def insert_pred(
 # ==========================
 # Registro de cérebros (auto)
 # ==========================
-def register_brains_auto(conn, hub: BrainHub) -> List[str]:
-    loaded: List[str] = []
+def _load_brains_auto(conn) -> Dict[str, Any]:
+    brains: Dict[str, Any] = {}
 
-    def _register(brain) -> None:
-        hub.register(brain)
-        loaded.append(getattr(brain, "id", brain.__class__.__name__))
+    def _register_obj(brain) -> None:
+        bid = str(getattr(brain, "id", brain.__class__.__name__))
+        brains[bid] = brain
 
     def _try_add(import_path: str, cls_name: str, *args, **kwargs) -> None:
         try:
             mod = __import__(import_path, fromlist=[cls_name])
             cls = getattr(mod, cls_name)
             b = cls(conn, *args, **kwargs)
-            _register(b)
+            _register_obj(b)
         except Exception:
             # silencioso por design (auto-detect)
             pass
@@ -288,16 +295,57 @@ def register_brains_auto(conn, hub: BrainHub) -> List[str]:
     _try_add("training.brains.structural.pattern_shape_brain", "StructuralPatternShapeBrain")
     _try_add("training.brains.structural.core_protect_brain", "StructuralCoreProtectBrain")
     _try_add("training.brains.structural.anti_absence_brain", "StructuralAntiAbsenceBrain")
+    _try_add("training.brains.brain_step_sequences", "HeuristicStepSequencesBrain")
 
     try:
         from training.brains.heuristic.heuristic_brains import build_heuristic_brains
 
         for brain in build_heuristic_brains(conn):
-            _register(brain)
+            _register_obj(brain)
     except Exception:
         pass
 
+    return brains
+
+
+def register_brains_auto(conn, hub: BrainHub) -> List[str]:
+    loaded: List[str] = []
+
+    brains = _load_brains_auto(conn)
+    for bid, brain in brains.items():
+        hub.register(brain)
+        loaded.append(bid)
+
     return loaded
+
+
+def fetch_top_brain_ids_by_performance(
+    conn: sqlite3.Connection,
+    limit: int,
+    include_disabled: bool,
+) -> List[str]:
+    """
+    Retorna brain_ids ordenados por assertividade histórica (q15, q14, média).
+    """
+    where = "" if include_disabled else "WHERE c.habilitado=1"
+    cur = conn.cursor()
+    cur.execute(
+        f"""
+        SELECT c.brain_id,
+               COALESCE(SUM(p.qtd_15), 0) AS q15,
+               COALESCE(SUM(p.qtd_14), 0) AS q14,
+               COALESCE(AVG(p.media_pontos), 0) AS media
+        FROM cerebros c
+        LEFT JOIN cerebro_performance p ON p.cerebro_id = c.id
+        {where}
+        GROUP BY c.brain_id
+        ORDER BY q15 DESC, q14 DESC, media DESC
+        LIMIT ?
+        """,
+        (max(1, int(limit)),),
+    )
+    rows = cur.fetchall()
+    return [str(r[0]) for r in rows]
 
 
 # ==========================
@@ -712,7 +760,160 @@ def generate_for_size(
                 inseridos += 1
         log(f"💾 Predições salvas em DB: {inseridos}/{len(final)} (tabela predicoes_proximo)")
 
-    log(f"📄 Relatório salvo em: {out_path}")
+    log(f"📄 Relatório salvo em: {abs_path_str(out_path)}")
+    return out_path
+
+
+def generate_por_cerebro_top(
+    conn: sqlite3.Connection,
+    size: int,
+    janela: int,
+    per_brain: int,
+    top_brains: int,
+    perfil: str,
+    include_disabled_brains: bool,
+    selected_brain_ids: Optional[List[str]] = None,
+    split_files: bool = True,
+) -> Path:
+    """
+    Gera catálogo por cérebro para o usuário final.
+    - Seleciona os melhores cérebros por performance (q15/q14/média),
+    - Gera N jogos por cérebro (como no treino: per_brain),
+    - Exibe todos os jogos por cérebro para o usuário escolher.
+    """
+    ultimo_concurso = fetch_max_concurso(conn)
+    proximo_concurso = ultimo_concurso + 1
+
+    context = build_context(conn, concurso_n=ultimo_concurso, janela_recente=janela)
+    freq = context.get("freq_recente", {}) or {}
+    memoria_1415 = fetch_memoria_top(conn, min_pontos=14, limit=500)
+    w_hub, w_freq, w_mem, w_shape, w_ran = get_profile_weights(perfil)
+
+    all_brains = _load_brains_auto(conn)
+    if not all_brains:
+        raise RuntimeError("Nenhum cérebro foi carregado para geração por cérebro.")
+
+    if selected_brain_ids:
+        chosen_ids = [bid for bid in selected_brain_ids if bid in all_brains]
+        if not chosen_ids:
+            raise RuntimeError("Nenhum brain_id informado está disponível no runtime atual.")
+    else:
+        ranked_ids = fetch_top_brain_ids_by_performance(
+            conn,
+            limit=max(1, int(top_brains)),
+            include_disabled=bool(include_disabled_brains),
+        )
+        chosen_ids = [bid for bid in ranked_ids if bid in all_brains][: max(1, int(top_brains))]
+        if not chosen_ids:
+            # fallback: pega os primeiros do runtime
+            chosen_ids = list(all_brains.keys())[: max(1, int(top_brains))]
+
+    # estatísticas de performance para exibição
+    perf_map: Dict[str, Tuple[int, int, float]] = {}
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT c.brain_id,
+               COALESCE(SUM(p.qtd_15), 0) AS q15,
+               COALESCE(SUM(p.qtd_14), 0) AS q14,
+               COALESCE(AVG(p.media_pontos), 0) AS media
+        FROM cerebros c
+        LEFT JOIN cerebro_performance p ON p.cerebro_id = c.id
+        GROUP BY c.brain_id
+        """
+    )
+    for bid, q15, q14, media in cur.fetchall():
+        perf_map[str(bid)] = (int(q15 or 0), int(q14 or 0), float(media or 0.0))
+
+    reports_dir = ROOT / "reports"
+    reports_dir.mkdir(parents=True, exist_ok=True)
+    split_dir = reports_dir / "por_cerebro"
+    if split_files:
+        split_dir.mkdir(parents=True, exist_ok=True)
+
+    out_path = reports_dir / f"proximo_concurso_{proximo_concurso}_catalogo_por_cerebro_{size}.txt"
+
+    lines: List[str] = []
+    lines.append("=========================================")
+    lines.append("🧠 CATÁLOGO DE JOGOS POR CÉREBRO (TOP)")
+    lines.append("=========================================")
+    lines.append(f"Data/Hora: {now_str()}")
+    lines.append(f"Último concurso conhecido: {ultimo_concurso}")
+    lines.append(f"Próximo concurso: {proximo_concurso}")
+    lines.append(f"Tamanho do jogo: {size}")
+    lines.append(f"Janela (contexto): {janela}")
+    lines.append(f"Jogos por cérebro (per_brain): {per_brain}")
+    lines.append(f"Perfil de scoring auxiliar: {perfil}")
+    lines.append(f"Top cérebros selecionados: {len(chosen_ids)}")
+    lines.append("=========================================\n")
+
+    print("\n✅ Catálogo por cérebro (usuário final)\n")
+
+    for idx, bid in enumerate(chosen_ids, 1):
+        brain = all_brains[bid]
+        try:
+            brain.load_state()
+        except Exception:
+            pass
+
+        jogos_raw = brain.generate(context=context, size=int(size), n=int(per_brain))
+        uniq: Dict[Tuple[int, ...], float] = {}
+        for jogo in jogos_raw:
+            jogo_sorted = tuple(sorted(int(x) for x in jogo))
+            uniq[jogo_sorted] = float(brain.score_game(list(jogo_sorted), context))
+
+        jogos_sorted = sorted(uniq.items(), key=lambda x: x[1], reverse=True)
+        q15, q14, media = perf_map.get(bid, (0, 0, 0.0))
+
+        lines.append(f"CÉREBRO {idx:02d}: {bid}")
+        lines.append(f"  histórico: q15={q15} | q14={q14} | média={media:.2f}")
+        lines.append(f"  jogos_gerados={len(jogos_sorted)}")
+
+        print(f"CÉREBRO {idx:02d} | {bid} | q15={q15} q14={q14} média={media:.2f} | jogos={len(jogos_sorted)}")
+
+        for j_idx, (jogo_t, s_hub) in enumerate(jogos_sorted, 1):
+            jogo = list(jogo_t)
+            s_freq = score_freq_recente(jogo, freq)
+            s_mem = score_memoria(jogo, memoria_1415)
+            s_shape = score_shape(jogo, size)
+            s_ran = 0.0
+            s_final = (w_hub * s_hub) + (w_freq * s_freq) + (w_mem * s_mem) + (w_shape * s_shape) - (w_ran * s_ran)
+
+            lines.append(
+                f"    JOGO {j_idx:03d}: {jogo} | score_brain={s_hub:.6f} | "
+                f"final_aux={s_final:.6f} | freq={s_freq:.6f} | mem={s_mem:.6f} | shape={s_shape:.6f}"
+            )
+        lines.append("")
+
+        if split_files:
+            per_brain_path = split_dir / f"proximo_concurso_{proximo_concurso}_{size}_{bid}.txt"
+            b_lines: List[str] = []
+            b_lines.append("=========================================")
+            b_lines.append("🧠 JOGOS POR CÉREBRO")
+            b_lines.append("=========================================")
+            b_lines.append(f"Data/Hora: {now_str()}")
+            b_lines.append(f"Cérebro: {bid}")
+            b_lines.append(f"Próximo concurso: {proximo_concurso}")
+            b_lines.append(f"Tamanho do jogo: {size}")
+            b_lines.append(f"Histórico: q15={q15} | q14={q14} | média={media:.2f}")
+            b_lines.append("")
+            for j_idx, (jogo_t, s_hub) in enumerate(jogos_sorted, 1):
+                jogo = list(jogo_t)
+                b_lines.append(f"JOGO {j_idx:03d}: {jogo} | score_brain={s_hub:.6f}")
+            per_brain_path.write_text("\n".join(b_lines), encoding="utf-8")
+            lines.append(f"  arquivo_txt_cerebro={abs_path_str(per_brain_path)}")
+            lines.append("")
+            print(f"   ↳ arquivo: {abs_path_str(per_brain_path)}")
+
+    lines.append("Como escolher para jogar:")
+    lines.append("- Revise os blocos de cada cérebro e selecione o cérebro que mais te agrada.")
+    lines.append("- Para gerar apenas de cérebros específicos, use: --por-cerebro --brain-id <id> (pode repetir).")
+    lines.append("")
+    lines.append("Observação importante:")
+    lines.append("- Loteria é aleatória. Este catálogo é apenas suporte estatístico/informativo.")
+
+    out_path.write_text("\n".join(lines), encoding="utf-8")
+    log(f"📄 Catálogo por cérebro salvo em: {abs_path_str(out_path)}")
     return out_path
 
 
@@ -743,6 +944,28 @@ def main() -> None:
     parser.add_argument("--perfil", type=str, default="balanceado", choices=["conservador", "balanceado", "agressivo"])
     parser.add_argument("--salvar-db", action="store_true", help="Salvar jogos gerados na tabela predicoes_proximo.")
     parser.add_argument("--seed", type=int, default=None, help="Seed para reprodutibilidade (opcional).")
+    parser.add_argument(
+        "--por-cerebro",
+        action="store_true",
+        help="Gera catálogo por cérebro (top por 14/15), exibindo todos os jogos por cérebro para escolha do usuário.",
+    )
+    parser.add_argument("--top-brains", type=int, default=12, help="Quantidade de cérebros top no modo --por-cerebro.")
+    parser.add_argument(
+        "--brain-id",
+        action="append",
+        default=None,
+        help="Selecionar cérebro específico no modo --por-cerebro (pode repetir a flag).",
+    )
+    parser.add_argument(
+        "--include-disabled-brains",
+        action="store_true",
+        help="No modo --por-cerebro, permite selecionar top incluindo cérebros OFF no cadastro.",
+    )
+    parser.add_argument(
+        "--por-cerebro-split-files",
+        action="store_true",
+        help="No modo --por-cerebro, gera também um TXT separado para cada cérebro.",
+    )
     args = parser.parse_args()
 
     if args.seed is not None:
@@ -780,6 +1003,29 @@ def main() -> None:
         base_size = int(args.base_size) if args.base_size is not None else size
         if base_size not in (15, 16, 18, 19):
             base_size = size
+
+        selected_brains: Optional[List[str]] = None
+        if args.brain_id:
+            selected_brains = []
+            for raw in args.brain_id:
+                for token in str(raw).split(","):
+                    bid = token.strip()
+                    if bid:
+                        selected_brains.append(bid)
+
+        if bool(args.por_cerebro):
+            generate_por_cerebro_top(
+                conn=conn,
+                size=size,
+                janela=max(50, int(args.janela)),
+                per_brain=max(10, int(args.per_brain)),
+                top_brains=max(1, int(args.top_brains)),
+                perfil=str(args.perfil),
+                include_disabled_brains=bool(args.include_disabled_brains),
+                selected_brain_ids=selected_brains,
+                split_files=bool(args.por_cerebro_split_files),
+            )
+            return
 
         generate_for_size(
             conn=conn,
