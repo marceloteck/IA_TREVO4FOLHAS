@@ -680,12 +680,42 @@ def build_default_arms() -> List[SmartArm]:
     ]
 
 
+def log_smart_summary(
+    done: int,
+    totals: Dict[str, int],
+    arm_stats: Dict[str, ArmStats],
+    recipe_stats: Dict[str, RecipeStats],
+    recipes: Dict[str, SmartRecipe],
+    run_id: int,
+    run_name: str,
+) -> None:
+    best_arm = max(arm_stats.items(), key=lambda kv: kv[1].mean_reward) if arm_stats else ("-", ArmStats())
+    best_recipe = max(recipe_stats.items(), key=lambda kv: kv[1].mean_reward) if recipe_stats else ("-", RecipeStats())
+    best_recipe_name = best_recipe[0]
+    best_recipe_status = recipes.get(best_recipe_name, SmartRecipe("-", members=[])).status
+
+    log("=========================================")
+    log("📊 RESUMO PARCIAL — BACKTEST SMART")
+    log("=========================================")
+    log(f"📌 run_id={run_id} | run_name={run_name}")
+    log(f"🔢 steps={done}")
+    log(f"🔥 total_14+={totals['q14']} | 🏆 total_15={totals['q15']} | 💾 memoria+={totals['mem']}")
+    log(f"🧠 best_arm={best_arm[0]} | reward_médio={best_arm[1].mean_reward:.3f} | melhor_hit={best_arm[1].best_hit}")
+    log(
+        f"🧬 best_recipe={best_recipe_name}({best_recipe_status}) | "
+        f"reward_médio={best_recipe[1].mean_reward:.3f} | melhor_hit={best_recipe[1].best_hit}"
+    )
+    log("✅ Treino continua automaticamente...")
+    log("=========================================")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Backtest inteligente separado (N->N+1), focado em 14/15.")
     parser.add_argument("--steps", type=int, default=120, help="Quantidade de concursos para processar (0=infinito).")
     parser.add_argument("--minutes", type=int, default=0, help="Parada por tempo em minutos.")
     parser.add_argument("--save-every", type=int, default=10, help="Salvar estado dos cérebros a cada N steps.")
     parser.add_argument("--progress-every", type=int, default=5, help="Exibir progresso a cada N steps.")
+    parser.add_argument("--summary-every", type=int, default=0, help="Exibir resumo parcial completo a cada N steps (0=desliga).")
     parser.add_argument("--avaliar-top-k", type=int, default=40, help="Quantos candidatos avaliar para 15 e 18.")
     parser.add_argument("--recent-window", type=int, default=220, help="Janela recente para score temporal dos cérebros.")
     parser.add_argument("--ucb-c", type=float, default=1.25, help="Força de exploração UCB dos arms.")
@@ -875,6 +905,17 @@ def main() -> None:
                             f"best_recipe={best_recipe[0]}({best_recipe[1].mean_reward:.2f})",
                         ]
                     )
+                )
+
+            if int(args.summary_every) > 0 and done % int(args.summary_every) == 0:
+                log_smart_summary(
+                    done=done,
+                    totals=totals,
+                    arm_stats=arm_stats,
+                    recipe_stats=recipe_stats,
+                    recipes=recipes,
+                    run_id=int(run_id),
+                    run_name=str(args.run_name),
                 )
 
         hub.save_all()
