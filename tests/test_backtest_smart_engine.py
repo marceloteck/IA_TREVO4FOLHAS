@@ -13,7 +13,6 @@ from training.backtest.backtest_smart_engine import (
     ensure_seed_recipes,
     ensure_smart_tables,
     evolve_recipe,
-    fetch_brain_phase_scores,
     get_smart_checkpoint,
     load_recipes,
     register_hypothesis,
@@ -118,30 +117,3 @@ def test_detect_regime_and_compute_reward():
 
     r = compute_reward(q14=2, q15=1, best=15, regime="estavel", repeat_rate=0.6, reward_q15=5.0, reward_q14=1.5)
     assert r > 0
-
-
-def test_fetch_brain_phase_scores_supports_legacy_schema():
-    conn = sqlite3.connect(":memory:")
-    try:
-        conn.execute("CREATE TABLE cerebros (id INTEGER PRIMARY KEY, brain_id TEXT)")
-        conn.execute(
-            """
-            CREATE TABLE cerebro_performance (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                cerebro_id INTEGER NOT NULL,
-                concurso INTEGER NOT NULL,
-                jogos_gerados INTEGER DEFAULT 0,
-                qtd_14 INTEGER DEFAULT 0,
-                qtd_15 INTEGER DEFAULT 0
-            )
-            """
-        )
-        conn.execute("INSERT INTO cerebros(id, brain_id) VALUES (1, 'brain_a')")
-        conn.execute("INSERT INTO cerebro_performance(cerebro_id, concurso, jogos_gerados, qtd_14, qtd_15) VALUES (1, 10, 100, 3, 1)")
-        conn.commit()
-
-        scores = fetch_brain_phase_scores(conn, recent_window=50)
-        assert "brain_a" in scores
-        assert scores["brain_a"] > 0
-    finally:
-        conn.close()

@@ -289,94 +289,28 @@ def ensure_seed_recipes(conn: sqlite3.Connection, loaded_brains: Sequence[str]) 
 
 
 def fetch_brain_phase_scores(conn: sqlite3.Connection, recent_window: int) -> Dict[str, float]:
-    """
-    Compatível com schemas diferentes de `cerebro_performance`.
-
-    Suporta:
-    - schema legado/atual do projeto (`cerebro_id`, `concurso`, `jogos_gerados`, `qtd_14`, `qtd_15`)
-    - schema alternativo antigo (`brain_id`, `concurso_n`, `acertos` por linha)
-    """
     if not safe_table_exists(conn, "cerebro_performance"):
         return {}
-
-    cols = {str(r[1]) for r in conn.execute("PRAGMA table_info(cerebro_performance)").fetchall()}
-
-    # Caminho preferencial: schema oficial (trainer_v2/db_schema)
-    if {"cerebro_id", "concurso", "jogos_gerados", "qtd_14", "qtd_15"}.issubset(cols):
-        min_n = 1
-        if "concurso" in cols:
-            max_row = conn.execute("SELECT MAX(concurso) FROM cerebro_performance").fetchone()
-            max_n = int(max_row[0]) if max_row and max_row[0] is not None else 0
-            min_n = max(1, max_n - int(recent_window) + 1)
-
-        if safe_table_exists(conn, "cerebros"):
-            rows = conn.execute(
-                """
-                SELECT c.brain_id,
-                       COALESCE(SUM(p.qtd_15),0) AS q15,
-                       COALESCE(SUM(p.qtd_14),0) AS q14,
-                       COALESCE(SUM(p.jogos_gerados),0) AS jogos
-                  FROM cerebro_performance p
-                  JOIN cerebros c ON c.id = p.cerebro_id
-                 WHERE p.concurso >= ?
-                 GROUP BY c.brain_id
-                """,
-                (int(min_n),),
-            ).fetchall()
-        else:
-            rows = conn.execute(
-                """
-                SELECT CAST(p.cerebro_id AS TEXT) AS brain_id,
-                       COALESCE(SUM(p.qtd_15),0) AS q15,
-                       COALESCE(SUM(p.qtd_14),0) AS q14,
-                       COALESCE(SUM(p.jogos_gerados),0) AS jogos
-                  FROM cerebro_performance p
-                 WHERE p.concurso >= ?
-                 GROUP BY p.cerebro_id
-                """,
-                (int(min_n),),
-            ).fetchall()
-
-        scores: Dict[str, float] = {}
-        for brain_id, q15, q14, jogos in rows:
-            jogos_i = max(1, int(jogos or 0))
-            scores[str(brain_id)] = (int(q15 or 0) * 6.0 + int(q14 or 0) * 2.0) / float(jogos_i)
-        return scores
-
-    # Fallback: schema alternativo (brain_id, concurso_n, acertos)
-    if {"brain_id", "acertos"}.issubset(cols):
-        concurso_col = "concurso_n" if "concurso_n" in cols else ("concurso" if "concurso" in cols else None)
-        min_n = 1
-        if concurso_col:
-            max_row = conn.execute(f"SELECT MAX({concurso_col}) FROM cerebro_performance").fetchone()
-            max_n = int(max_row[0]) if max_row and max_row[0] is not None else 0
-            min_n = max(1, max_n - int(recent_window) + 1)
-            where_clause = f"WHERE {concurso_col} >= ?"
-            params = (int(min_n),)
-        else:
-            where_clause = ""
-            params = tuple()
-
-        rows = conn.execute(
-            f"""
-            SELECT brain_id,
-                   SUM(CASE WHEN acertos >= 15 THEN 1 ELSE 0 END) AS q15,
-                   SUM(CASE WHEN acertos >= 14 THEN 1 ELSE 0 END) AS q14,
-                   COUNT(*) AS jogos
-              FROM cerebro_performance
-              {where_clause}
-             GROUP BY brain_id
-            """,
-            params,
-        ).fetchall()
-
-        scores: Dict[str, float] = {}
-        for brain_id, q15, q14, jogos in rows:
-            jogos_i = max(1, int(jogos or 0))
-            scores[str(brain_id)] = (int(q15 or 0) * 6.0 + int(q14 or 0) * 2.0) / float(jogos_i)
-        return scores
-
-    return {}
+    max_row = conn.execute("SELECT MAX(concurso_n) FROM cerebro_performance").fetchone()
+    max_n = int(max_row[0]) if max_row and max_row[0] is not None else 0
+    min_n = max(1, max_n - int(recent_window) + 1)
+    rows = conn.execute(
+        """
+        SELECT brain_id,
+               SUM(CASE WHEN acertos >= 15 THEN 1 ELSE 0 END) AS q15,
+               SUM(CASE WHEN acertos >= 14 THEN 1 ELSE 0 END) AS q14,
+               COUNT(*) AS jogos
+          FROM cerebro_performance
+         WHERE concurso_n >= ?
+         GROUP BY brain_id
+        """,
+        (int(min_n),),
+    ).fetchall()
+    scores: Dict[str, float] = {}
+    for brain_id, q15, q14, jogos in rows:
+        jogos = max(1, int(jogos or 0))
+        scores[str(brain_id)] = (int(q15 or 0) * 6.0 + int(q14 or 0) * 2.0) / float(jogos)
+    return scores
 
 
 def detect_regime(context: Dict[str, Any]) -> str:

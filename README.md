@@ -261,8 +261,6 @@ Parâmetros relevantes do smart:
 
 Obs.: o smart mantém o modelo `N -> N+1`, usa os cérebros existentes e agora evolui “receitas” automaticamente (mantém, promove, parkear, revive), detecta regime (`estavel/volatil/aquecido/frio`) e registra hipóteses em `backtest_smart_hypotheses`.
 
-Compatibilidade: o motor faz leitura tolerante de `cerebro_performance` para schemas legados (coluna `concurso`) e variantes antigas, evitando falha por ausência de `concurso_n`.
-
 ---
 
 ## 📊 Relatórios e monitoramento
