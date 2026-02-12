@@ -266,3 +266,40 @@ class BrainHub:
             if b.id == brain_id:
                 b.learn(concurso_n, jogo, resultado_n1, pontos, context)
                 break
+
+    def learn_with_feedback(
+        self,
+        context: Dict[str, Any],
+        candidatos: List[Dict[str, Any]],
+        resultado_n1: List[int],
+    ) -> None:
+        """
+        Aprende a partir de uma lista de candidatos avaliados no backtest.
+
+        Espera candidatos no formato retornado por ``generate_games``.
+        Método tolerante a registros incompletos para evitar quebrar ciclos longos.
+        """
+        concurso_n = int(context.get("concurso_n", 0) or 0)
+        resultado_sorted = sorted(int(x) for x in (resultado_n1 or []) if x is not None)
+
+        if concurso_n <= 0 or not resultado_sorted:
+            return
+
+        for cand in candidatos or []:
+            brain_id = str(cand.get("brain_id", "")).strip()
+            if not brain_id:
+                continue
+
+            jogo = sorted(set(int(x) for x in cand.get("jogo", []) if x is not None))
+            if not jogo:
+                continue
+
+            pontos = len(set(jogo) & set(resultado_sorted))
+            self.learn(
+                concurso_n=concurso_n,
+                jogo=jogo,
+                resultado_n1=resultado_sorted,
+                pontos=int(pontos),
+                context=context,
+                brain_id=brain_id,
+            )
