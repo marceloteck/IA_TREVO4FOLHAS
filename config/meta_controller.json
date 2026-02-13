@@ -1,0 +1,9 @@
+{
+  "enabled": true,
+  "confidence_threshold": 0.55,
+  "hidden_units": 32,
+  "learning_rate": 0.001,
+  "batch_size": 32,
+  "train_every_steps": 10,
+  "fallback_enabled": true
+}

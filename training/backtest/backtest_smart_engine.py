@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 import argparse
+import base64
+import hashlib
 import json
 import math
+import numpy as np
+import pickle
 import random
 import sqlite3
 import sys
@@ -27,6 +31,28 @@ from training.backtest.backtest_engine import (
     safe_table_exists,
 )
 from training.core.brain_hub import BrainHub
+from training.meta.context_features import extract_context_features
+from training.meta.diversity import portfolio_diversity
+from training.meta.ab_testing import ABTestingManager
+from training.meta.checkpoint import CheckpointManager
+from training.meta.meta_controller import MetaController
+from training.meta.mode_manager import ModeManager
+from training.meta.model_store import ModelStore
+from training.meta.portfolio_builder import PortfolioBuilder
+from training.meta.promotion import PromotionManager
+from training.meta.regime_detector import detect_regime as detect_regime_v2
+from training.meta.reward_v2 import compute_reward_v2
+from training.meta.stagnation import StagnationTracker
+from training.memory.memory_audit import ensure_memory_tables
+from training.memory.memory_refiner import MemoryRefiner
+from training.perf.feature_cache import FeatureCache
+from training.perf.sqlite_optimize import apply_sqlite_pragmas, ensure_indexes
+from training.perf.throttle import Throttle
+from training.reporting.report_html import generate_html_report
+from training.reporting.run_artifacts import compute_config_hash, try_get_git_commit
+from training.reporting.telemetry_writer import TelemetryWriter
+from training.validation.validator import StrategyValidator
+from training.tuning.auto_tuner import AutoTuner
 from training.utils.comparador import contar_acertos
 
 
@@ -36,6 +62,47 @@ def now_str() -> str:
 
 def log(msg: str) -> None:
     print(f"[{now_str()}] {msg}")
+
+
+def load_json_config(path: Path, default: Dict[str, Any]) -> Dict[str, Any]:
+    try:
+        if path.exists():
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                return data
+    except Exception:
+        pass
+    return dict(default)
+
+def _encode_obj(obj: Any) -> str:
+    return base64.b64encode(pickle.dumps(obj)).decode("ascii")
+
+
+def _decode_obj(blob: str) -> Any:
+    return pickle.loads(base64.b64decode(blob.encode("ascii")))
+
+
+def _current_brain_mask(hub: BrainHub) -> List[str]:
+    out: List[str] = []
+    for b in getattr(hub, "brains", []):
+        if bool(getattr(b, "enabled", False)):
+            out.append(str(getattr(b, "id", "")))
+    return out
+
+
+def _restore_brain_mask(hub: BrainHub, mask: Sequence[str]) -> None:
+    allow = set(str(x) for x in (mask or []))
+    for b in getattr(hub, "brains", []):
+        setattr(b, "enabled", str(getattr(b, "id", "")) in allow)
+
+
+def _latest_open_run_id(conn: sqlite3.Connection, table: str, id_col: str = "id", where: str = "") -> int | None:
+    q = f"SELECT {id_col} FROM {table} "
+    if where:
+        q += f"WHERE {where} "
+    q += f"ORDER BY {id_col} DESC LIMIT 1"
+    row = conn.execute(q).fetchone()
+    return int(row[0]) if row and row[0] is not None else None
 
 
 @dataclass(frozen=True)
@@ -161,6 +228,81 @@ def ensure_smart_tables(conn: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_backtest_hypotheses_kind ON backtest_smart_hypotheses(kind);
         """
     )
+    conn.commit()
+
+
+def ensure_meta_tables(conn: sqlite3.Connection) -> None:
+    cur = conn.cursor()
+    cur.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS runs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            started_at TEXT,
+            mode TEXT,
+            config_hash TEXT,
+            seed INTEGER,
+            status TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS context_snapshots (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_id INTEGER,
+            step INTEGER,
+            concurso_ref INTEGER,
+            features_json TEXT,
+            created_at TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS decisions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_id INTEGER,
+            step INTEGER,
+            arm TEXT,
+            recipe TEXT,
+            exploration_rate REAL,
+            confidence REAL,
+            fallback_used INTEGER,
+            created_at TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS outcomes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_id INTEGER,
+            step INTEGER,
+            concurso_ref INTEGER,
+            hit_max INTEGER,
+            reward REAL,
+            diversity REAL,
+            created_at TEXT
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_runs_started ON runs(started_at);
+        CREATE INDEX IF NOT EXISTS idx_ctx_run_step ON context_snapshots(run_id, step);
+        CREATE INDEX IF NOT EXISTS idx_decisions_run_step ON decisions(run_id, step);
+        CREATE INDEX IF NOT EXISTS idx_outcomes_run_step ON outcomes(run_id, step);
+        """
+    )
+    conn.commit()
+
+
+def start_meta_run(conn: sqlite3.Connection, mode: str, config_payload: Dict[str, Any], seed: int) -> int:
+    ensure_meta_tables(conn)
+    cfg = json.dumps(config_payload, sort_keys=True, ensure_ascii=False)
+    cfg_hash = hashlib.sha1(cfg.encode("utf-8")).hexdigest()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        INSERT INTO runs(started_at, mode, config_hash, seed, status)
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        (now_str(), str(mode), cfg_hash, int(seed), "running"),
+    )
+    conn.commit()
+    return int(cur.lastrowid)
+
+
+def finish_meta_run(conn: sqlite3.Connection, run_id: int, status: str = "finished") -> None:
+    conn.execute("UPDATE runs SET status=? WHERE id=?", (str(status), int(run_id)))
     conn.commit()
 
 
@@ -421,6 +563,38 @@ def _recipe_active_members(recipe: SmartRecipe, loaded_ids: Sequence[str], phase
     return ordered[:keep]
 
 
+def _augment_members(base: List[str], forced: Sequence[str] | None = None, experimental: Sequence[str] | None = None) -> List[str]:
+    out = list(base)
+    for group in (forced or [], experimental or []):
+        if str(group) not in out:
+            out.append(str(group))
+    return out
+
+
+def _build_candidate_records(cands: List[Dict[str, Any]], tipo: int, arm: SmartArm, recipe: SmartRecipe, ultimo: set[int]) -> List[Dict[str, Any]]:
+    records: List[Dict[str, Any]] = []
+    for c in cands:
+        dezenas = sorted(set(int(x) for x in c.get("jogo", []) if x is not None))
+        if len(dezenas) != int(tipo):
+            continue
+        even = sum(1 for d in dezenas if d % 2 == 0)
+        repetidas = len(set(dezenas) & set(ultimo)) if ultimo else 0
+        records.append(
+            {
+                "dezenas": dezenas,
+                "score": float(c.get("score", 0.0)),
+                "origem": f"{arm.name}:{recipe.name}:{c.get('brain_id', 'unknown')}",
+                "features": {
+                    "even": int(even),
+                    "sum": int(sum(dezenas)),
+                    "repeated": int(repetidas),
+                },
+                "raw": c,
+            }
+        )
+    return records
+
+
 def evolve_recipe(
     recipes: Dict[str, SmartRecipe],
     recipe_stats: Dict[str, RecipeStats],
@@ -527,10 +701,27 @@ def run_step(
     min_mem: int,
     reward_q15: float,
     reward_q14: float,
+    mode: str = "production",
+    portfolio_builder: PortfolioBuilder | None = None,
+    portfolio_cfg: Dict[str, Any] | None = None,
+    forced_brains: Sequence[str] | None = None,
+    experimental_brains: Sequence[str] | None = None,
+    memory_refiner_cfg: Dict[str, Any] | None = None,
 ) -> Dict[str, Any]:
     result_n1 = fetch_result(conn, concurso_n + 1)
     if not result_n1:
-        return {"reward": 0.0, "q14": 0, "q15": 0, "melhor_acerto": 0, "active": 0, "regime": "neutro", "repeat_rate": 0.0}
+        return {
+            "reward": 0.0,
+            "legacy_reward": 0.0,
+            "q14": 0,
+            "q15": 0,
+            "melhor_acerto": 0,
+            "active": 0,
+            "regime": "neutro",
+            "repeat_rate": 0.0,
+            "hits_distribution": {"12": 0, "13": 0, "14": 0, "15": 0},
+            "evaluated_games": [],
+        }
 
     context = build_context(conn, concurso_n, arm.janela)
     regime = detect_regime(context)
@@ -539,6 +730,7 @@ def run_step(
     loaded_ids = [str(getattr(b, "id", "unknown")) for b in getattr(hub, "brains", [])]
 
     active_ids = _recipe_active_members(recipe, loaded_ids, phase_scores)
+    active_ids = _augment_members(active_ids, forced=forced_brains, experimental=experimental_brains)
     brains_ativos = _set_enabled_brains(hub, active_ids)
     per_brain_map = build_per_brain_map(active_ids, phase_scores, arm.base_per_brain, arm.boost_top_brains, recipe.boosts)
 
@@ -547,13 +739,42 @@ def run_step(
     c18 = hub.generate_games(context=context, size=18, per_brain=per_brain_map, top_n=arm.top_n)
     dt = time.time() - t0
 
-    c15 = (c15 or [])[: int(avaliar_top_k)]
-    c18 = (c18 or [])[: int(avaliar_top_k)]
+    c15 = (c15 or [])
+    c18 = (c18 or [])
+
+    prefer_gold = bool((memory_refiner_cfg or {}).get("prefer_gold_in_production", False)) and str(mode) == "production"
+    if prefer_gold:
+        gold_rows = conn.execute("SELECT dezenas_json FROM memoria_jogos_gold WHERE tipo_jogo IN (15,18) ORDER BY hit DESC, quality_score DESC LIMIT 5000").fetchall()
+        gold_set = set(str(r[0]) for r in gold_rows)
+        for cand in c15:
+            key = json.dumps(sorted(set(int(x) for x in cand.get("jogo", []) if x is not None)), ensure_ascii=False)
+            if key in gold_set:
+                cand["score"] = float(cand.get("score", 0.0)) + 0.75
+        for cand in c18:
+            key = json.dumps(sorted(set(int(x) for x in cand.get("jogo", []) if x is not None)), ensure_ascii=False)
+            if key in gold_set:
+                cand["score"] = float(cand.get("score", 0.0)) + 0.75
+
+    if portfolio_builder is not None and bool((portfolio_cfg or {}).get("enabled", False)):
+        rec15 = _build_candidate_records(c15, 15, arm, recipe, ultimo)
+        rec18 = _build_candidate_records(c18, 18, arm, recipe, ultimo)
+        qmode = "research" if str(mode) == "research" else "production"
+        chosen15 = portfolio_builder.build(rec15, int(avaliar_top_k), qmode, quotas={})
+        chosen18 = portfolio_builder.build(rec18, int(avaliar_top_k), qmode, quotas={})
+        set15 = {tuple(x) for x in chosen15}
+        set18 = {tuple(x) for x in chosen18}
+        c15 = [c for c in c15 if tuple(sorted(set(int(x) for x in c.get("jogo", []) if x is not None))) in set15]
+        c18 = [c for c in c18 if tuple(sorted(set(int(x) for x in c.get("jogo", []) if x is not None))) in set18]
+    else:
+        c15 = c15[: int(avaliar_top_k)]
+        c18 = c18[: int(avaliar_top_k)]
 
     q14 = q15 = mem = 0
     best = 0
     rep_sum = 0.0
     rep_count = 0
+    hits_distribution = {"12": 0, "13": 0, "14": 0, "15": 0}
+    evaluated_games: List[List[int]] = []
     tentativa = 1
     for tipo, cands in ((15, c15), (18, c18)):
         for c in cands:
@@ -561,7 +782,12 @@ def run_step(
             if len(jogo) != tipo:
                 continue
             acertos = int(contar_acertos(jogo, result_n1))
+            evaluated_games.append(jogo)
             best = max(best, acertos)
+            if acertos >= 12:
+                k = str(min(15, acertos))
+                if k in hits_distribution:
+                    hits_distribution[k] += 1
             if acertos >= 14:
                 q14 += 1
             if acertos >= 15:
@@ -600,13 +826,14 @@ def run_step(
                 mem += 1
 
     repeat_rate = rep_sum / float(rep_count) if rep_count > 0 else 0.0
-    reward = compute_reward(q14, q15, best, regime, repeat_rate, reward_q15, reward_q14)
+    legacy_reward = compute_reward(q14, q15, best, regime, repeat_rate, reward_q15, reward_q14)
 
     hub.learn_with_feedback(context, c15[:10], result_n1)
     hub.learn_with_feedback(context, c18[:10], result_n1)
 
     return {
-        "reward": float(reward),
+        "reward": float(legacy_reward),
+        "legacy_reward": float(legacy_reward),
         "q14": int(q14),
         "q15": int(q15),
         "melhor_acerto": int(best),
@@ -614,6 +841,8 @@ def run_step(
         "mem": int(mem),
         "regime": regime,
         "repeat_rate": float(repeat_rate),
+        "hits_distribution": hits_distribution,
+        "evaluated_games": evaluated_games,
     }
 
 
@@ -732,17 +961,61 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=None, help="Seed opcional para reprodutibilidade.")
     args = parser.parse_args()
 
-    if args.seed is not None:
-        random.seed(int(args.seed))
+    meta_config = load_json_config(ROOT / "config" / "meta_controller.json", {"enabled": False})
+    diversity_cfg = load_json_config(ROOT / "config" / "diversity.json", {"enabled": False})
+    reward_v2_cfg = load_json_config(ROOT / "config" / "reward_v2.json", {"enabled": False})
+    regime_cfg = load_json_config(ROOT / "config" / "regime_detector.json", {"enabled": False})
+    stagnation_cfg = load_json_config(ROOT / "config" / "stagnation.json", {"enabled": False})
+    mode_cfg = load_json_config(ROOT / "config" / "production_research.json", {"enabled": False})
+    portfolio_cfg = load_json_config(ROOT / "config" / "portfolio.json", {"enabled": False})
+    ab_cfg = load_json_config(ROOT / "config" / "ab_testing.json", {"enabled": False})
+    checkpoint_cfg = load_json_config(ROOT / "config" / "checkpoint.json", {"enabled": False})
+    memory_refiner_cfg = load_json_config(ROOT / "config" / "memory_refiner.json", {"enabled": False})
+    baseline_cfg = load_json_config(ROOT / "config" / "baseline.json", {"enabled": False})
+    validator_cfg = load_json_config(ROOT / "config" / "validator.json", {"enabled": False})
+    reporting_cfg = load_json_config(ROOT / "config" / "reporting.json", {"enabled": False})
+    performance_cfg = load_json_config(ROOT / "config" / "performance.json", {"profile": "low_cpu"})
+    auto_tuning_cfg = load_json_config(ROOT / "config" / "auto_tuning.json", {"enabled": False})
+
+    seed = int(args.seed) if args.seed is not None else random.SystemRandom().randint(1, 2_147_483_647)
+    random.seed(seed)
+    np.random.seed(seed)
 
     conn = get_conn()
     run_id = None
+    meta_run_id = None
     try:
         if not safe_table_exists(conn, "concursos"):
             raise RuntimeError("Tabela 'concursos' não existe. Rode START/startBD.py.")
 
+        if bool(performance_cfg.get("sqlite_optimize", True)):
+            apply_sqlite_pragmas(conn, str(performance_cfg.get("profile", "low_cpu")))
+        ensure_indexes(conn)
         ensure_smart_tables(conn)
-        run_id = start_smart_run(conn, args.run_name)
+        ensure_meta_tables(conn)
+        ensure_memory_tables(conn)
+        checkpoint_manager = CheckpointManager(conn, checkpoint_cfg)
+        memory_refiner = MemoryRefiner(conn, memory_refiner_cfg)
+        strategy_validator = StrategyValidator(conn, validator_cfg, baseline_cfg)
+        telemetry_writer = TelemetryWriter(conn, reporting_cfg)
+        feature_cache = FeatureCache(conn, performance_cfg)
+        throttle = Throttle(performance_cfg)
+        auto_tuner = AutoTuner(conn, auto_tuning_cfg, str(ROOT / "config"))
+
+        resume_last = bool(checkpoint_cfg.get("enabled", False)) and bool(checkpoint_cfg.get("resume_last_run", True))
+        resume_state = None
+        if resume_last:
+            open_smart = _latest_open_run_id(conn, "backtest_smart_runs", "id", "finished_at IS NULL")
+            open_meta = _latest_open_run_id(conn, "runs", "id", "status='running'")
+            if open_smart is not None and open_meta is not None:
+                run_id = int(open_smart)
+                meta_run_id = int(open_meta)
+                resume_state = checkpoint_manager.load_latest_valid(int(meta_run_id))
+
+        if run_id is None:
+            run_id = start_smart_run(conn, args.run_name)
+        if meta_run_id is None:
+            meta_run_id = start_meta_run(conn, "backtest_smart", {"args": vars(args), "meta": meta_config}, seed)
 
         concursos = fetch_all_concursos(conn)
         if len(concursos) < 2:
@@ -763,6 +1036,18 @@ def main() -> None:
         recipe_stats = {name: RecipeStats() for name in recipes.keys()}
         arms = build_default_arms()
         arm_stats = {a.name: ArmStats() for a in arms}
+        meta_enabled = bool(meta_config.get("enabled", False))
+        meta_controller = MetaController(meta_config, model_store=ModelStore()) if meta_enabled else None
+        stagnation_tracker = StagnationTracker(stagnation_cfg)
+        mode_manager = ModeManager(mode_cfg)
+        portfolio_builder = PortfolioBuilder(portfolio_cfg)
+        ab_manager = ABTestingManager(ab_cfg)
+        promotion_manager = PromotionManager(ab_cfg)
+        reward_history: List[float] = []
+        last_mode = "production"
+        last_decision_policy = {"arm": "", "recipe": "", "exploration_rate": 0.5, "brain_mask": []}
+        last_diversity = 0.0
+        last_hits_distribution = {"12": 0, "13": 0, "14": 0, "15": 0}
 
         start = time.time()
         done = 0
@@ -774,11 +1059,56 @@ def main() -> None:
         log(f"📌 run_id={run_id} | run_name={args.run_name}")
         log(f"📌 cérebros carregados={len(loaded)} | receitas={len(recipes)}")
 
+        config_hash = compute_config_hash(str(ROOT / "config"))
+        artifacts = {
+            "config_hash": config_hash,
+            "meta_controller_enabled": str(bool(meta_config.get("enabled", False))),
+            "reward_v2_enabled": str(bool(reward_v2_cfg.get("enabled", False))),
+            "mode_manager_enabled": str(bool(mode_cfg.get("enabled", False))),
+            "portfolio_enabled": str(bool(portfolio_cfg.get("enabled", False))),
+            "memory_refiner_enabled": str(bool(memory_refiner_cfg.get("enabled", False))),
+            "git_commit": try_get_git_commit(),
+            "python_version": sys.version.split()[0],
+            "platform": sys.platform,
+            "seed": str(seed),
+        }
+        if bool(reporting_cfg.get("enabled", True)) and meta_run_id is not None:
+            for k, v in artifacts.items():
+                telemetry_writer.log_run_artifact(int(meta_run_id), k, v)
+
+        if resume_state:
+            try:
+                random.setstate(_decode_obj(str(resume_state.get("rng_state_py", ""))))
+            except Exception:
+                pass
+            try:
+                np.random.set_state(_decode_obj(str(resume_state.get("rng_state_np", ""))))
+            except Exception:
+                pass
+            if meta_controller is not None:
+                meta_controller.set_state(dict(resume_state.get("meta_controller", {})))
+            mode_manager.set_state(dict(resume_state.get("mode_manager", {})))
+            stagnation_tracker.set_state(dict(resume_state.get("stagnation", {})))
+            ab_manager.set_state(dict(resume_state.get("ab_testing", {})))
+            reward_history = list(resume_state.get("reward_history", reward_history))
+            done = int(resume_state.get("step", done))
+            last_mode = str(resume_state.get("mode", last_mode))
+            last_decision_policy = dict(resume_state.get("policy", last_decision_policy))
+            last_diversity = float(resume_state.get("last_diversity", last_diversity))
+            last_hits_distribution = dict(resume_state.get("last_hits_distribution", last_hits_distribution))
+            restored_ref = int(resume_state.get("concurso_ref", 0))
+            if restored_ref in trainable:
+                pos = (trainable.index(restored_ref) + 1) % max(1, len(trainable))
+            _restore_brain_mask(hub, resume_state.get("policy", {}).get("brain_mask", []))
+            log(f"♻️ Auto-resume aplicado no step={done} concurso_ref={restored_ref}")
+
         while True:
             if args.steps > 0 and done >= int(args.steps):
                 break
             if args.minutes > 0 and (time.time() - start) >= float(args.minutes) * 60.0:
                 break
+
+            throttle.maybe_sleep(done + 1)
 
             if pos >= len(trainable):
                 pos = 0
@@ -789,8 +1119,99 @@ def main() -> None:
             regime = detect_regime(context_probe)
             phase_scores = fetch_brain_phase_scores(conn, int(args.recent_window))
 
-            arm = choose_arm_ucb(arms, arm_stats, total_steps=max(1, done + 1), c=float(args.ucb_c), regime=regime)
-            recipe = choose_recipe_ucb(recipes, recipe_stats, total_steps=max(1, done + 1), c=float(args.recipe_ucb_c))
+            arm_default = choose_arm_ucb(arms, arm_stats, total_steps=max(1, done + 1), c=float(args.ucb_c), regime=regime)
+            recipe_default = choose_recipe_ucb(recipes, recipe_stats, total_steps=max(1, done + 1), c=float(args.recipe_ucb_c))
+
+            stag_state_pre = stagnation_tracker.peek()
+            baseline_n_perf = min(20, len(reward_history))
+            baseline_perf = (sum(reward_history[-baseline_n_perf:]) / float(baseline_n_perf)) if baseline_n_perf > 0 else 0.0
+            recent_perf = {
+                "step": int(done + 1),
+                "is_bad": baseline_n_perf >= 8 and baseline_perf < 0.0,
+                "is_stable": baseline_n_perf >= 8 and abs(baseline_perf) < 0.25,
+            }
+            prev_mode = str(last_mode)
+            mode = mode_manager.decide_mode(regime_id=0, stagnation=stag_state_pre, recent_perf=recent_perf)
+            features = feature_cache.get_features(
+                concurso_n,
+                overrides={"stagnation_score": float(stag_state_pre.get("stagnation_score", 0.0))},
+            )
+            regime_id = detect_regime_v2(features, regime_cfg)
+            features["regime_id"] = float(max(0.0, min(1.0, regime_id / 3.0)))
+            mode = mode_manager.decide_mode(regime_id=regime_id, stagnation=stag_state_pre, recent_perf=recent_perf)
+            valid_recipes = [k for k, v in recipes.items() if v.status in {"seed", "candidate", "promoted", "parked"}]
+            slots = ab_manager.choose_slots(
+                mode=mode,
+                available_arms=[a.name for a in arms],
+                available_recipes=valid_recipes,
+                available_brains=loaded,
+                core_brains=list(mode_cfg.get("core_brains", [])),
+            )
+            decision = {
+                "arm": arm_default.name,
+                "recipe": recipe_default.name,
+                "exploration_rate": 0.5,
+                "confidence": 1.0,
+                "fallback_used": 0,
+                "explore_level": "medio",
+            }
+            if meta_controller is not None:
+                decision = meta_controller.decide(
+                    features=features,
+                    arms=[a.name for a in arms],
+                    recipes=valid_recipes,
+                    default_arm=arm_default.name,
+                    default_recipe=recipe_default.name,
+                    regime_unstable=(regime_id == 3),
+                )
+            if mode == "research":
+                if slots.get("candidate_arms"):
+                    decision["arm"] = str(slots["candidate_arms"][0])
+                if slots.get("candidate_recipes"):
+                    decision["recipe"] = str(slots["candidate_recipes"][0])
+
+            if bool(stag_state_pre.get("rescue_mode", False)):
+                decision["exploration_rate"] = min(
+                    1.0,
+                    float(decision.get("exploration_rate", 0.5)) + float(stagnation_cfg.get("rescue_exploration_boost", 0.10)),
+                )
+
+            arm_map = {a.name: a for a in arms}
+            arm = arm_map.get(str(decision["arm"]), arm_default)
+            recipe = recipes.get(str(decision["recipe"]), recipe_default)
+            last_mode = mode
+            last_decision_policy = {
+                "arm": arm.name,
+                "recipe": recipe.name,
+                "exploration_rate": float(decision.get("exploration_rate", 0.5)),
+                "brain_mask": _current_brain_mask(hub),
+            }
+
+            if meta_run_id is not None:
+                conn.execute(
+                    """
+                    INSERT INTO context_snapshots(run_id, step, concurso_ref, features_json, created_at)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (int(meta_run_id), int(done + 1), int(concurso_n), json.dumps(features, ensure_ascii=False), now_str()),
+                )
+                conn.execute(
+                    """
+                    INSERT INTO decisions(run_id, step, arm, recipe, exploration_rate, confidence, fallback_used, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        int(meta_run_id),
+                        int(done + 1),
+                        arm.name,
+                        recipe.name,
+                        float(decision.get("exploration_rate", 0.5)),
+                        float(decision.get("confidence", 0.0)),
+                        int(decision.get("fallback_used", 0)),
+                        now_str(),
+                    ),
+                )
+                conn.commit()
 
             result = run_step(
                 conn=conn,
@@ -803,6 +1224,12 @@ def main() -> None:
                 min_mem=int(args.min_mem),
                 reward_q15=float(args.reward_q15),
                 reward_q14=float(args.reward_q14),
+                mode=mode,
+                portfolio_builder=portfolio_builder,
+                portfolio_cfg=portfolio_cfg,
+                forced_brains=list(mode_cfg.get("core_brains", [])) if mode == "production" else [],
+                experimental_brains=slots.get("candidate_brains", []),
+                memory_refiner_cfg=memory_refiner_cfg,
             )
 
             a = arm_stats[arm.name]
@@ -821,6 +1248,189 @@ def main() -> None:
             totals["q15"] += int(result["q15"])
             totals["mem"] += int(result["mem"])
             done += 1
+
+            diversity = portfolio_diversity(
+                result.get("evaluated_games", []),
+                pair_sample_max=int(diversity_cfg.get("pair_sample_max", 200)),
+            ) if bool(diversity_cfg.get("enabled", True)) else max(0.0, min(1.0, 1.0 - float(result.get("repeat_rate", 0.0))))
+
+            baseline_n = min(20, len(reward_history))
+            baseline = (sum(reward_history[-baseline_n:]) / float(baseline_n)) if baseline_n > 0 else float(result.get("legacy_reward", 0.0))
+            stag_state = stagnation_tracker.update(
+                hit_max=int(result["melhor_acerto"]),
+                reward=float(result.get("legacy_reward", result["reward"])),
+                arm=arm.name,
+                recipe=recipe.name,
+            )
+            features["stagnation_score"] = float(stag_state.get("stagnation_score", 0.0))
+
+            if bool(reward_v2_cfg.get("enabled", False)):
+                result["reward"] = compute_reward_v2(
+                    hit_max=int(result["melhor_acerto"]),
+                    hits_distribution=result.get("hits_distribution", {}),
+                    diversity=float(diversity),
+                    context={
+                        "legacy_reward": float(result.get("legacy_reward", 0.0)),
+                        "recent_reward_baseline": float(baseline),
+                        "diversity_cfg": diversity_cfg,
+                        "rescue_penalty_after": 8,
+                    },
+                    decision=decision,
+                    stagnation=stag_state,
+                    cfg=reward_v2_cfg,
+                )
+
+            reward_history.append(float(result["reward"]))
+            last_diversity = float(diversity)
+            last_hits_distribution = dict(result.get("hits_distribution", {}))
+
+            ab_key = f"{mode}:{arm.name}:{recipe.name}"
+            ab_manager.update_result(ab_key, float(result["reward"]), int(result["melhor_acerto"]))
+            ab_manager.record_experiment(
+                {
+                    "step": int(done),
+                    "mode": mode,
+                    "arm": arm.name,
+                    "recipe": recipe.name,
+                    "slots": slots,
+                    "reward": float(result["reward"]),
+                    "hit_max": int(result["melhor_acerto"]),
+                }
+            )
+
+            cand_stats = {
+                "n": int(ab_manager.stats.get(ab_key, {}).get("n", 0)),
+                "mean_reward": float(ab_manager.stats.get(ab_key, {}).get("reward_sum", 0.0)) / max(1, int(ab_manager.stats.get(ab_key, {}).get("n", 0))),
+                "hit_max": int(ab_manager.stats.get(ab_key, {}).get("hit_max", 0)),
+            }
+            base_stats = {
+                "mean_reward": baseline,
+                "hit_max": max((x.best_hit for x in arm_stats.values()), default=0),
+            }
+
+            validator_report = {
+                "passes_baseline": False,
+                "passes_validation": False,
+                "candidate_score_mean": 0.0,
+                "baseline_global_mean": 0.0,
+                "baseline_recent_mean": 0.0,
+            }
+            if cand_stats["n"] >= 8 and bool(validator_cfg.get("enabled", False)):
+                def _candidate_callable(concurso_ref: int, tipo_jogo: int, max_games: int, context: dict):
+                    ctx = build_context(conn, int(concurso_ref), arm.janela)
+                    pm = build_per_brain_map(loaded, phase_scores, arm.base_per_brain, arm.boost_top_brains, recipe.boosts)
+                    g = hub.generate_games(context=ctx, size=int(tipo_jogo), per_brain=pm, top_n=min(120, int(max_games) * 3)) or []
+                    out = []
+                    for item in g[: int(max_games)]:
+                        jogo = sorted(set(int(x) for x in item.get("jogo", []) if x is not None))
+                        if len(jogo) == int(tipo_jogo):
+                            out.append(jogo)
+                    return out
+
+                validator_report = strategy_validator.validate_candidate(
+                    candidate_callable=_candidate_callable,
+                    concurso_ref=int(concurso_n),
+                    tipo_jogo=15,
+                    max_games=min(int(baseline_cfg.get("max_games", 60)), 60),
+                    context={"arm": arm.name, "recipe": recipe.name, "mode": mode},
+                )
+
+                if bool(reporting_cfg.get("enabled", True)) and meta_run_id is not None:
+                    telemetry_writer.log_experiment(
+                        {
+                            "run_id": int(meta_run_id),
+                            "kind": "validator",
+                            "candidate_name": f"{arm.name}:{recipe.name}",
+                            "baseline_name": "global+recent_120",
+                            "window_steps": int(validator_cfg.get("valid_window", 120)),
+                            "status": "finished",
+                            "candidate_score_mean": float(validator_report.get("candidate_score_mean", 0.0)),
+                            "baseline_score_mean": float(max(validator_report.get("baseline_global_mean", 0.0), validator_report.get("baseline_recent_mean", 0.0))),
+                            "passes": bool(validator_report.get("passes_validation", False)),
+                            "notes": str(validator_report.get("reason", "")),
+                        }
+                    )
+
+                if validator_report.get("passes_validation") and bool(memory_refiner_cfg.get("enabled", False)):
+                    conn.execute(
+                        """
+                        UPDATE memoria_jogos_gold
+                        SET validated=1
+                        WHERE strategy_signature LIKE ?
+                        """,
+                        (f"%{recipe.name}%",),
+                    )
+                    conn.commit()
+
+            promo_action = promotion_manager.evaluate_candidate({**cand_stats, **validator_report}, base_stats)
+            if promo_action in {"park", "disable"} and recipe.name in recipes:
+                recipes[recipe.name].status = "parked" if promo_action == "park" else "parked"
+            elif promo_action == "promote" and recipe.name in recipes:
+                recipes[recipe.name].status = "promoted"
+
+            if meta_controller is not None:
+                meta_controller.train_step(features, decision, float(result["reward"]), regime_unstable=(regime_id == 3))
+
+            if meta_run_id is not None:
+                conn.execute(
+                    """
+                    INSERT INTO outcomes(run_id, step, concurso_ref, hit_max, reward, diversity, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        int(meta_run_id),
+                        int(done),
+                        int(concurso_n + 1),
+                        int(result["melhor_acerto"]),
+                        float(result["reward"]),
+                        float(diversity),
+                        now_str(),
+                    ),
+                )
+                conn.commit()
+
+            ck_enabled = bool(checkpoint_cfg.get("enabled", False))
+            save_every = max(1, int(checkpoint_cfg.get("save_every_steps", 5)))
+            mode_switched = mode != str(prev_mode)
+            should_save_ck = ck_enabled and (done % save_every == 0 or mode_switched)
+            if should_save_ck and meta_run_id is not None:
+                if meta_controller is not None:
+                    meta_controller.model_store.save_state(
+                        {
+                            "arm_model": meta_controller.arm_model,
+                            "recipe_model": meta_controller.recipe_model,
+                            "explore_model": meta_controller.explore_model,
+                            "bandit": meta_controller.bandit.to_state(),
+                            "arm_classes": meta_controller.arm_classes,
+                            "recipe_classes": meta_controller.recipe_classes,
+                            "is_trained": meta_controller.is_trained,
+                        }
+                    )
+                ck_state = {
+                    "run_id": int(meta_run_id),
+                    "step": int(done),
+                    "concurso_ref": int(concurso_n),
+                    "rng_seed_base": int(seed),
+                    "rng_state_py": _encode_obj(random.getstate()),
+                    "rng_state_np": _encode_obj(np.random.get_state()),
+                    "meta_controller": meta_controller.get_state() if meta_controller is not None else {},
+                    "bandit": meta_controller.bandit.to_state() if meta_controller is not None else {},
+                    "mode": str(mode),
+                    "mode_manager": mode_manager.get_state(),
+                    "stagnation": stagnation_tracker.get_state(),
+                    "ab_testing": ab_manager.get_state(),
+                    "policy": last_decision_policy,
+                    "last_diversity": float(last_diversity),
+                    "last_hits_distribution": last_hits_distribution,
+                    "reward_history": reward_history[-50:],
+                }
+                checkpoint_manager.save(ck_state)
+
+            if bool(memory_refiner_cfg.get("enabled", False)) and done % max(1, int(memory_refiner_cfg.get("batch_size", 2000) // 400)) == 0:
+                try:
+                    memory_refiner.run_batch(batch_size=int(memory_refiner_cfg.get("batch_size", 2000)))
+                except Exception:
+                    pass
 
             recipes[recipe.name] = update_recipe_status(
                 recipe=recipes[recipe.name],
@@ -895,6 +1505,7 @@ def main() -> None:
                             f"step={done}",
                             f"N={concurso_n}->{concurso_n + 1}",
                             f"regime={result.get('regime', 'neutro')}",
+                            f"mode={mode}",
                             f"arm={arm.name}",
                             f"recipe={recipe.name}({recipes[recipe.name].status})",
                             f"reward={result['reward']:.2f}",
@@ -906,6 +1517,26 @@ def main() -> None:
                         ]
                     )
                 )
+
+            rep_every = max(1, int(reporting_cfg.get("summary_every_steps", 200)))
+            if bool(reporting_cfg.get("enabled", True)) and meta_run_id is not None and done % rep_every == 0:
+                telemetry_writer.log_summary_step(
+                    int(meta_run_id),
+                    int(done),
+                    {
+                        "mode": mode,
+                        "arm": arm.name,
+                        "recipe": recipe.name,
+                        "reward": float(result.get("reward", 0.0)),
+                        "hit_max": int(result.get("melhor_acerto", 0)),
+                        "diversity": float(diversity),
+                        "fallback_used": int(decision.get("fallback_used", 0)),
+                        "rescue_mode": bool(stag_state.get("rescue_mode", False)),
+                    },
+                )
+
+            if bool(auto_tuning_cfg.get("enabled", False)):
+                auto_tuner.run_if_due(int(meta_run_id) if meta_run_id is not None else int(run_id), int(done))
 
             if int(args.summary_every) > 0 and done % int(args.summary_every) == 0:
                 log_smart_summary(
@@ -919,6 +1550,11 @@ def main() -> None:
                 )
 
         hub.save_all()
+        if bool(reporting_cfg.get("enabled", True)) and bool(reporting_cfg.get("html_enabled", True)) and meta_run_id is not None:
+            try:
+                generate_html_report(conn, int(meta_run_id), ROOT / "reports" / f"run_{int(meta_run_id)}.html", top_n=int(reporting_cfg.get("top_n", 10)))
+            except Exception:
+                pass
         log("=========================================")
         log(f"✅ Finalizado | steps={done} | total_14+={totals['q14']} | total_15={totals['q15']} | memoria+={totals['mem']}")
         log(f"📚 Receitas aprendidas no banco: {len(recipes)}")
@@ -927,6 +1563,8 @@ def main() -> None:
         try:
             if run_id is not None:
                 finish_smart_run(conn, int(run_id))
+            if meta_run_id is not None:
+                finish_meta_run(conn, int(meta_run_id), status="finished")
         except Exception:
             pass
         conn.close()

@@ -1,0 +1,12 @@
+{
+  "enabled": true,
+  "run_every_steps": 500,
+  "max_changes_per_run": 3,
+  "freeze_on_baseline_fail": true,
+  "limits": {
+    "confidence_threshold": [0.45, 0.75],
+    "reward_diversity_weight": [0.15, 0.60],
+    "reward_stagnation_weight": [0.25, 0.80],
+    "portfolio_max_clone_jaccard": [0.60, 0.85]
+  }
+}

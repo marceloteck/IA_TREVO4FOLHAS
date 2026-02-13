@@ -1,0 +1,7 @@
+{
+  "enabled": true,
+  "summary_every_steps": 200,
+  "top_n": 10,
+  "html_enabled": true,
+  "cli_enabled": true
+}

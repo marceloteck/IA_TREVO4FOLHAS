@@ -1,0 +1,7 @@
+{
+  "fechamento_tipo": "POOL_VARIAVEL",
+  "pool_size": 18,
+  "max_jogos": 30,
+  "tipo_jogo": 15,
+  "perfil": "balanced"
+}

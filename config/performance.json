@@ -1,0 +1,10 @@
+{
+  "profile": "low_cpu",
+  "sqlite_optimize": true,
+  "feature_cache": true,
+  "throttle": {
+    "enabled": true,
+    "sleep_every_steps": 25,
+    "sleep_ms": 30
+  }
+}

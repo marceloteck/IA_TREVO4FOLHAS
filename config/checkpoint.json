@@ -1,0 +1,6 @@
+{
+  "enabled": true,
+  "save_every_steps": 5,
+  "resume_last_run": true,
+  "max_keep_checkpoints": 50
+}

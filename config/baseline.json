@@ -1,0 +1,5 @@
+{
+  "enabled": true,
+  "variants": ["global", "recent_120"],
+  "max_games": 60
+}

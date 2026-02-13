@@ -1,0 +1,15 @@
+{
+  "enabled": true,
+  "max_pair_checks": 200,
+  "min_diversity": 0.35,
+  "production": {
+    "quota_even": [7, 8, 9],
+    "quota_sum_ranges": [[170, 195], [196, 215], [216, 235]],
+    "max_clone_jaccard": 0.70
+  },
+  "research": {
+    "quota_even": [6, 7, 8, 9, 10],
+    "quota_sum_ranges": [[165, 190], [191, 210], [211, 240]],
+    "max_clone_jaccard": 0.78
+  }
+}
