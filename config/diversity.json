@@ -1,0 +1,8 @@
+{
+  "enabled": true,
+  "pair_sample_max": 200,
+  "min_diversity": 0.35,
+  "target_diversity": 0.55,
+  "bonus_scale": 0.25,
+  "penalty_scale": 0.60
+}

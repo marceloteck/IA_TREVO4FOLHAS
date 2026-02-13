@@ -1,0 +1,7 @@
+{
+  "enabled": true,
+  "production_slots": 1,
+  "research_slots": 4,
+  "test_window_steps": 50,
+  "promote_margin_reward": 0.10
+}

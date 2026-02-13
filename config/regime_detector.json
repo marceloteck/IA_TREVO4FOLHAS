@@ -1,0 +1,10 @@
+{
+  "enabled": true,
+  "instability": {
+    "drift_freq_120": 0.70,
+    "std_sum_120": 0.70,
+    "entropy_freq_120": 0.70
+  },
+  "reward_high": 0.60,
+  "reward_low": 0.35
+}

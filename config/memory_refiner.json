@@ -1,0 +1,12 @@
+{
+  "enabled": true,
+  "batch_size": 2000,
+  "gold_threshold": 0.72,
+  "quarantine_threshold": 0.35,
+  "min_hit_gold": 13,
+  "allow_12_in_gold": false,
+  "clone_threshold": 0.78,
+  "max_gold_size": 250000,
+  "compress_mode": "delete_redundant",
+  "prefer_gold_in_production": true
+}

@@ -7,6 +7,7 @@ IA incremental e multicérebro para análise estatística, aprendizado contínuo
 ## 📌 Visão geral
 
 📘 Mapa técnico para programadores: `README_MAPA_PROJETO.md`
+📗 Guia operacional (Windows e fluxo diário): `docs/GUIA_OFICIAL_OPERACAO.md`
 
 O sistema se organiza em três pilares principais:
 

@@ -1,0 +1,7 @@
+{
+  "enabled": true,
+  "window_steps": 40,
+  "stagnation_steps_max": 80,
+  "threshold": 0.60,
+  "rescue_exploration_boost": 0.10
+}
