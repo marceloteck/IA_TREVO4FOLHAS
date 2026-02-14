@@ -12,6 +12,13 @@ def _bar(v: float, vmax: float = 1.0, width: int = 24) -> str:
     return "█" * n + "·" * (width - n)
 
 
+def _status_chip(status: str) -> str:
+    s = str(status or "warmup").lower()
+    colors = {"learning": "#1f9d55", "stable": "#b8860b", "regressing": "#cc3333", "warmup": "#888888"}
+    labels = {"learning": "APRENDENDO", "stable": "ESTÁVEL", "regressing": "REGREDINDO", "warmup": "WARMUP"}
+    return f"<span style='background:{colors.get(s, '#888')};color:white;padding:2px 6px;border-radius:9px'>{labels.get(s, 'WARMUP')}</span>"
+
+
 def generate_html_report(conn, run_id: int, out_path: Path, top_n: int = 10) -> Path:
     info = queries.run_info(conn, run_id)
     artifacts = queries.run_artifacts(conn, run_id)
@@ -23,6 +30,9 @@ def generate_html_report(conn, run_id: int, out_path: Path, top_n: int = 10) -> 
     div_mode = queries.diversity_by_mode(conn, run_id)
     gold, quar = queries.memory_growth(conn)
     exp_total, exp_pass = queries.experiments_summary(conn, run_id)
+    learning_timeline = queries.learning_status_timeline(conn, run_id)
+    learning_trends = queries.learning_trend_series(conn, run_id)
+    learning_modes = queries.learning_mode_changes(conn, run_id)
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     html = [
@@ -48,6 +58,35 @@ def generate_html_report(conn, run_id: int, out_path: Path, top_n: int = 10) -> 
     html.append(f"<h2>Diversidade por modo</h2><p>{div_mode}</p>")
     html.append(f"<h2>Memória</h2><p>gold={gold} quarantine={quar}</p>")
     html.append(f"<h2>Experimentos</h2><p>total={exp_total} passed={exp_pass}</p>")
+
+    html.append("<h2>Linha do tempo de status (learning monitor)</h2>")
+    if learning_timeline:
+        html.append("<table><tr><th>step</th><th>status</th></tr>")
+        for st, status in learning_timeline[-120:]:
+            html.append(f"<tr><td>{int(st)}</td><td>{_status_chip(str(status))}</td></tr>")
+        html.append("</table>")
+    else:
+        html.append("<p>Sem dados de status.</p>")
+
+    html.append("<h2>Gráfico de tendência (Δreward / Δ14+ baseline)</h2><pre>")
+    if learning_trends:
+        for st, d_reward, d_q14 in learning_trends[-120:]:
+            bar_reward = _bar(float(d_reward or 0.0) + 1.0, vmax=2.0, width=18)
+            bar_q14 = _bar(float(d_q14 or 0.0) + 0.5, vmax=1.0, width=18)
+            html.append(f"step {int(st):4d} | Δreward={float(d_reward or 0.0):+0.3f} {bar_reward} | Δ14+={float(d_q14 or 0.0):+0.3f} {bar_q14}")
+    else:
+        html.append("Sem dados de tendência.")
+    html.append("</pre>")
+
+    html.append("<h2>Histórico de mudanças de modo</h2>")
+    if learning_modes:
+        html.append("<table><tr><th>step</th><th>modo</th><th>forçado</th><th>resgate</th></tr>")
+        for st, mode, forced, rescue in learning_modes[-120:]:
+            html.append(f"<tr><td>{int(st)}</td><td>{mode or '-'}</td><td>{forced or '-'}</td><td>{'sim' if int(rescue or 0) else 'não'}</td></tr>")
+        html.append("</table>")
+    else:
+        html.append("<p>Sem histórico de modo.</p>")
+
     html.append("</body></html>")
 
     out_path.write_text("\n".join(html), encoding="utf-8")
