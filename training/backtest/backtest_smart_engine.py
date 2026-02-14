@@ -45,6 +45,10 @@ from training.meta.regime_detector import detect_regime as detect_regime_v2
 from training.meta.reward_v2 import compute_reward_v2
 from training.meta.stagnation import StagnationTracker
 from training.meta.learning_monitor import LearningMonitor
+from training.meta.coverage_optimizer import CoverageOptimizer
+from training.meta.risk_gate import RiskGate
+from training.meta.structural_monitor import classify_structural_stagnation
+from training.meta.governance import GovernanceInputs, GovernanceManager, ensure_governance_table, save_governance_decision
 from training.memory.memory_audit import ensure_memory_tables
 from training.memory.memory_refiner import MemoryRefiner
 from training.perf.feature_cache import FeatureCache
@@ -57,6 +61,7 @@ from training.validation.validator import StrategyValidator
 from training.tuning.auto_tuner import AutoTuner
 from training.utils.comparador import contar_acertos
 from training.utils.progress import Heartbeat, ProgressPrinter, StepTimer
+from training.utils.console_panel import make_panel_line
 
 
 def now_str() -> str:
@@ -303,6 +308,7 @@ def ensure_meta_tables(conn: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_outcomes_run_step ON outcomes(run_id, step);
         """
     )
+    ensure_governance_table(conn)
     conn.commit()
 
 
@@ -763,6 +769,14 @@ def run_step(
     forced_brains: Sequence[str] | None = None,
     experimental_brains: Sequence[str] | None = None,
     memory_refiner_cfg: Dict[str, Any] | None = None,
+    coverage_optimizer: CoverageOptimizer | None = None,
+    coverage_alpha_boost: float = 0.0,
+    structural_stagnation: bool = False,
+    avaliar_top_k_override: int | None = None,
+    pool_size_override: int | None = None,
+    coverage_alpha_override: float | None = None,
+    min_pair_coverage_override: float | None = None,
+    max_clone_jaccard_override: float | None = None,
 ) -> Dict[str, Any]:
     result_n1 = fetch_result(conn, concurso_n + 1)
     if not result_n1:
@@ -791,8 +805,10 @@ def run_step(
     per_brain_map = build_per_brain_map(active_ids, phase_scores, arm.base_per_brain, arm.boost_top_brains, recipe.boosts)
 
     t0 = time.time()
-    c15 = hub.generate_games(context=context, size=15, per_brain=per_brain_map, top_n=arm.top_n)
-    c18 = hub.generate_games(context=context, size=18, per_brain=per_brain_map, top_n=arm.top_n)
+    effective_top_n = int(pool_size_override) if pool_size_override is not None else int(arm.top_n)
+    effective_top_n = max(16, effective_top_n)
+    c15 = hub.generate_games(context=context, size=15, per_brain=per_brain_map, top_n=effective_top_n)
+    c18 = hub.generate_games(context=context, size=18, per_brain=per_brain_map, top_n=effective_top_n)
     dt = time.time() - t0
 
     c15 = (c15 or [])
@@ -811,19 +827,84 @@ def run_step(
             if key in gold_set:
                 cand["score"] = float(cand.get("score", 0.0)) + 0.75
 
+    effective_top_k = int(avaliar_top_k_override) if avaliar_top_k_override is not None else int(avaliar_top_k)
+
     if portfolio_builder is not None and bool((portfolio_cfg or {}).get("enabled", False)):
         rec15 = _build_candidate_records(c15, 15, arm, recipe, ultimo)
         rec18 = _build_candidate_records(c18, 18, arm, recipe, ultimo)
         qmode = "research" if str(mode) == "research" else "production"
-        chosen15 = portfolio_builder.build(rec15, int(avaliar_top_k), qmode, quotas={})
-        chosen18 = portfolio_builder.build(rec18, int(avaliar_top_k), qmode, quotas={})
+        coverage_alpha_total = float(coverage_alpha_boost)
+        if coverage_alpha_override is not None:
+            coverage_alpha_total += float(coverage_alpha_override)
+        if coverage_optimizer is not None and min_pair_coverage_override is not None:
+            try:
+                coverage_optimizer.min_pair_coverage = float(min_pair_coverage_override)
+            except Exception:
+                pass
+        chosen15 = portfolio_builder.build(
+            rec15,
+            int(effective_top_k),
+            qmode,
+            quotas={
+                "coverage_optimizer": coverage_optimizer,
+                "coverage_alpha_boost": float(coverage_alpha_total),
+                "structural_stagnation": bool(structural_stagnation),
+                "max_clone_jaccard_override": max_clone_jaccard_override,
+            },
+        )
+        chosen18 = portfolio_builder.build(
+            rec18,
+            int(effective_top_k),
+            qmode,
+            quotas={
+                "coverage_optimizer": coverage_optimizer,
+                "coverage_alpha_boost": float(coverage_alpha_total),
+                "structural_stagnation": bool(structural_stagnation),
+                "max_clone_jaccard_override": max_clone_jaccard_override,
+            },
+        )
+        pre_games = [list(x) for x in (chosen15 + chosen18)]
+        structural_probe = {"entropia": 0.0, "clone_ratio": 0.0, "cobertura_pares": 0.0, "structural_stagnation": False}
+        try:
+            structural_probe = classify_structural_stagnation(pre_games)
+        except Exception:
+            structural_probe = {"entropia": 0.0, "clone_ratio": 0.0, "cobertura_pares": 0.0, "structural_stagnation": False}
+
+        if bool(structural_probe.get("structural_stagnation", False)) and coverage_optimizer is not None and not bool(structural_stagnation):
+            chosen15 = portfolio_builder.build(
+                rec15,
+                int(effective_top_k),
+                qmode,
+                quotas={
+                    "coverage_optimizer": coverage_optimizer,
+                    "coverage_alpha_boost": float(coverage_alpha_total),
+                    "structural_stagnation": True,
+                },
+            )
+            chosen18 = portfolio_builder.build(
+                rec18,
+                int(effective_top_k),
+                qmode,
+                quotas={
+                    "coverage_optimizer": coverage_optimizer,
+                    "coverage_alpha_boost": float(coverage_alpha_total),
+                    "structural_stagnation": True,
+                },
+            )
+            pre_games = [list(x) for x in (chosen15 + chosen18)]
+            try:
+                structural_probe = classify_structural_stagnation(pre_games)
+            except Exception:
+                pass
+
         set15 = {tuple(x) for x in chosen15}
         set18 = {tuple(x) for x in chosen18}
         c15 = [c for c in c15 if tuple(sorted(set(int(x) for x in c.get("jogo", []) if x is not None))) in set15]
         c18 = [c for c in c18 if tuple(sorted(set(int(x) for x in c.get("jogo", []) if x is not None))) in set18]
     else:
-        c15 = c15[: int(avaliar_top_k)]
-        c18 = c18[: int(avaliar_top_k)]
+        structural_probe = {"entropia": 0.0, "clone_ratio": 0.0, "cobertura_pares": 0.0, "structural_stagnation": False}
+        c15 = c15[: int(effective_top_k)]
+        c18 = c18[: int(effective_top_k)]
 
     q14 = q15 = mem = 0
     best = 0
@@ -899,6 +980,7 @@ def run_step(
         "repeat_rate": float(repeat_rate),
         "hits_distribution": hits_distribution,
         "evaluated_games": evaluated_games,
+        "structural": dict(structural_probe),
     }
 
 
@@ -1099,6 +1181,8 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=None, help="Seed opcional para reprodutibilidade.")
     parser.add_argument("--heartbeat-seconds", type=int, default=15, help="Intervalo do heartbeat para evitar tela sem logs.")
     parser.add_argument("--profile-steps", type=int, default=0, help="Se 1, imprime tempo por fase em cada resumo de progresso.")
+    parser.add_argument("--panel", type=int, default=1, help="Se 1, imprime painel ao vivo compacto no console.")
+    parser.add_argument("--panel-every-steps", type=int, default=0, help="Intervalo do painel (0=usa update_every_steps do learning_monitor).")
     args = parser.parse_args()
 
     progress = ProgressPrinter(
@@ -1126,6 +1210,12 @@ def main() -> None:
     performance_cfg = load_json_config(ROOT / "config" / "performance.json", {"profile": "low_cpu"})
     auto_tuning_cfg = load_json_config(ROOT / "config" / "auto_tuning.json", {"enabled": False})
     learning_monitor_cfg = load_json_config(ROOT / "config" / "learning_monitor.json", {"enabled": False})
+    coverage_cfg = load_json_config(ROOT / "config" / "coverage.json", {"enabled": False, "alpha": 0.25})
+    risk_gate_cfg = load_json_config(ROOT / "config" / "risk_gate.json", {"enabled": False})
+    governance_cfg = load_json_config(ROOT / "config" / "governance.json", {"enabled": False})
+
+    panel_enabled = bool(int(args.panel))
+    panel_every_steps = int(args.panel_every_steps) if int(args.panel_every_steps) > 0 else max(1, int(learning_monitor_cfg.get("update_every_steps", 10)))
 
     seed = int(args.seed) if args.seed is not None else random.SystemRandom().randint(1, 2_147_483_647)
     random.seed(seed)
@@ -1192,8 +1282,14 @@ def main() -> None:
         portfolio_builder = PortfolioBuilder(portfolio_cfg)
         ab_manager = ABTestingManager(ab_cfg)
         promotion_manager = PromotionManager(ab_cfg)
-        learning_monitor = LearningMonitor(learning_monitor_cfg)
+        learning_monitor = LearningMonitor(learning_monitor_cfg, db_conn=conn)
+        coverage_optimizer = CoverageOptimizer(coverage_cfg)
+        risk_gate = RiskGate(risk_gate_cfg)
+        governance = GovernanceManager(governance_cfg)
         learning_snapshot: Dict[str, Any] = {"status": "warmup", "policy": learning_monitor.policy.to_dict()}
+        risk_snapshot: Dict[str, Any] = {"confidence_score": 0.5, "mode_risk": "BALANCEADO", "exploration_delta": 0.0, "coverage_alpha_boost": 0.0}
+        structural_snapshot: Dict[str, Any] = {"entropia": 0.0, "clone_ratio": 0.0, "cobertura_pares": 0.0, "structural_stagnation": False}
+        governance_snapshot: Dict[str, Any] = {"policy": "NORMAL", "applied_params": {"max_jogos": int(args.avaliar_top_k), "pool_size": 30, "coverage_alpha": float(coverage_cfg.get("alpha", 0.25)), "min_pair_coverage": float(coverage_cfg.get("min_pair_coverage", 0.30)), "max_clone_jaccard": 0.75}}
         reward_history: List[float] = []
         last_mode = "production"
         last_decision_policy = {"arm": "", "recipe": "", "exploration_rate": 0.5, "brain_mask": []}
@@ -1243,6 +1339,10 @@ def main() -> None:
             stagnation_tracker.set_state(dict(resume_state.get("stagnation", {})))
             ab_manager.set_state(dict(resume_state.get("ab_testing", {})))
             learning_monitor.set_state(dict(resume_state.get("learning_monitor", {})))
+            risk_snapshot = dict(resume_state.get("risk_snapshot", risk_snapshot))
+            structural_snapshot = dict(resume_state.get("structural_snapshot", structural_snapshot))
+            governance_snapshot = dict(resume_state.get("governance_snapshot", governance_snapshot))
+            governance.set_state(dict(resume_state.get("governance_state", {})))
             reward_history = list(resume_state.get("reward_history", reward_history))
             done = int(resume_state.get("step", done))
             last_mode = str(resume_state.get("mode", last_mode))
@@ -1338,6 +1438,10 @@ def main() -> None:
                 0.0,
                 min(1.0, float(decision.get("exploration_rate", 0.5)) + float(monitor_policy.get("exploration_delta", 0.0))),
             )
+            decision["exploration_rate"] = max(
+                0.0,
+                min(1.0, float(decision.get("exploration_rate", 0.5)) + float(risk_snapshot.get("exploration_delta", 0.0))),
+            )
             decision["confidence"] = max(
                 0.0,
                 min(1.0, float(decision.get("confidence", 0.0)) * float(monitor_policy.get("confidence_mult", 1.0))),
@@ -1383,6 +1487,83 @@ def main() -> None:
                 conn.commit()
 
             step_timer.mark("features")
+
+            governance_inputs = GovernanceInputs(
+                status=str(learning_snapshot.get("status", "warmup")).upper(),
+                confidence_score=float(risk_snapshot.get("confidence_score", 0.5)),
+                delta14=float(learning_snapshot.get("baseline", {}).get("delta_q14_vs_baseline", 0.0)),
+                reward_avg=float(learning_snapshot.get("metrics_main", {}).get("reward_mean", 0.0)),
+                trend=float(learning_snapshot.get("trend", {}).get("delta_reward", 0.0)),
+                structural_stagnation=bool(structural_snapshot.get("structural_stagnation", False)),
+                clone_ratio=float(structural_snapshot.get("clone_ratio", 0.0)),
+                entropy=float(structural_snapshot.get("entropia", 0.0)),
+                pair_coverage=float(structural_snapshot.get("cobertura_pares", 0.0)),
+                step=int(done + 1),
+                run_id=int(meta_run_id if meta_run_id is not None else run_id),
+            )
+            base_gen_params = {
+                "max_jogos": int(args.avaliar_top_k),
+                "pool_size": int(arm.top_n),
+                "coverage_alpha": float(coverage_cfg.get("alpha", 0.25)),
+                "min_pair_coverage": float(coverage_cfg.get("min_pair_coverage", 0.30)),
+                "max_clone_jaccard": 0.75,
+            }
+            governance_decision = None
+            applied_gen_params = dict(base_gen_params)
+            try:
+                if bool(governance.enabled):
+                    governance_decision = governance.choose_policy(governance_inputs)
+                    applied_gen_params = governance.apply_policy_to_generation(governance_decision, base_gen_params)
+
+                    def _freeze_autotuning(steps: int) -> None:
+                        governance.history["autotuning_frozen_until_step"] = max(
+                            int(governance.history.get("autotuning_frozen_until_step", 0)),
+                            int(done + 1 + max(1, int(steps))),
+                        )
+
+                    extra_actions = governance.governance_actions(
+                        governance_decision,
+                        {"freeze_autotuning": _freeze_autotuning},
+                    )
+                    if extra_actions:
+                        governance_decision.actions.extend(extra_actions)
+
+                    governance_snapshot = {
+                        "policy": str(governance_decision.policy_name),
+                        "reason": str(governance_decision.reason),
+                        "actions": list(governance_decision.actions),
+                        "applied_params": dict(applied_gen_params),
+                    }
+                else:
+                    governance_snapshot = {
+                        "policy": "DISABLED",
+                        "reason": "governance_disabled",
+                        "actions": [],
+                        "applied_params": dict(applied_gen_params),
+                    }
+            except Exception as _gov_exc:
+                governance_snapshot = {
+                    "policy": "FALLBACK",
+                    "reason": f"governance_error:{_gov_exc}",
+                    "actions": ["FALLBACK_OLD_BEHAVIOR"],
+                    "applied_params": dict(base_gen_params),
+                }
+                applied_gen_params = dict(base_gen_params)
+                governance_decision = None
+                log(f"⚠️ governance fallback: {_gov_exc}")
+
+            log(
+                "🧭 GOVERNANCE: "
+                f"policy={str(governance_snapshot.get('policy', 'NORMAL'))} | "
+                f"conf={float(governance_inputs.confidence_score or 0.5):.2f} | "
+                f"Δ14={float(governance_inputs.delta14):+.3f} | "
+                f"ent={float(governance_inputs.entropy):.2f} | "
+                f"clone={float(governance_inputs.clone_ratio):.2f} | "
+                f"cov={float(governance_inputs.pair_coverage):.2f} | "
+                f"actions={list(governance_snapshot.get('actions', []))} | "
+                f"reason={governance_snapshot.get('reason', '')}"
+            )
+
             progress.set_state(phase="generate_candidates", mode=mode, regime=regime, arm=arm.name, recipe=recipe.name)
             result = run_step(
                 conn=conn,
@@ -1401,6 +1582,14 @@ def main() -> None:
                 forced_brains=list(mode_cfg.get("core_brains", [])) if mode == "production" else [],
                 experimental_brains=slots.get("candidate_brains", []),
                 memory_refiner_cfg=memory_refiner_cfg,
+                coverage_optimizer=coverage_optimizer,
+                coverage_alpha_boost=float(risk_snapshot.get("coverage_alpha_boost", 0.0)),
+                structural_stagnation=bool(structural_snapshot.get("structural_stagnation", False)),
+                avaliar_top_k_override=int(applied_gen_params.get("max_jogos", int(args.avaliar_top_k))),
+                pool_size_override=int(applied_gen_params.get("pool_size", int(arm.top_n))),
+                coverage_alpha_override=float(applied_gen_params.get("coverage_alpha", coverage_cfg.get("alpha", 0.25))) - float(coverage_cfg.get("alpha", 0.25)),
+                min_pair_coverage_override=float(applied_gen_params.get("min_pair_coverage", coverage_cfg.get("min_pair_coverage", 0.30))),
+                max_clone_jaccard_override=float(applied_gen_params.get("max_clone_jaccard", 0.75)),
             )
             step_timer.mark("generate_candidates")
             progress.set_state(phase="evaluate_hits")
@@ -1426,6 +1615,14 @@ def main() -> None:
                 result.get("evaluated_games", []),
                 pair_sample_max=int(diversity_cfg.get("pair_sample_max", 200)),
             ) if bool(diversity_cfg.get("enabled", True)) else max(0.0, min(1.0, 1.0 - float(result.get("repeat_rate", 0.0))))
+            structural_snapshot = dict(result.get("structural", {}))
+            if not structural_snapshot:
+                try:
+                    structural_snapshot = classify_structural_stagnation(result.get("evaluated_games", []))
+                except Exception:
+                    structural_snapshot = {"entropia": 0.0, "clone_ratio": 0.0, "cobertura_pares": 0.0, "structural_stagnation": False}
+            if bool(structural_snapshot.get("structural_stagnation", False)):
+                log("⚠️ Estagnação estrutural detectada")
             step_timer.mark("build_portfolio")
 
             baseline_n = min(20, len(reward_history))
@@ -1461,6 +1658,51 @@ def main() -> None:
                 reward=float(result["reward"]),
                 mode=str(mode),
             )
+            risk_snapshot = risk_gate.update(learning_snapshot, float(result["reward"]))
+            for event_msg in list(learning_snapshot.get("events", [])):
+                log(str(event_msg))
+            log(
+                "🧠 Confidence="
+                f"{float(risk_snapshot.get('confidence_score', 0.0)):.2f} | "
+                f"Entropia={float(structural_snapshot.get('entropia', 0.0)):.2f} | "
+                f"Clone={float(structural_snapshot.get('clone_ratio', 0.0)):.2f} | "
+                f"Cobertura={float(structural_snapshot.get('cobertura_pares', 0.0)):.2f} | "
+                f"MODE={str(risk_snapshot.get('mode_risk', 'BALANCEADO'))}"
+            )
+            if bool(governance.enabled) and governance_decision is not None:
+                try:
+                    save_governance_decision(
+                        conn=conn,
+                        inputs=governance_inputs,
+                        decision=governance_decision,
+                        applied_params=applied_gen_params,
+                        created_at=now_str(),
+                    )
+                    conn.commit()
+                except Exception as _gov_exc:
+                    log(f"⚠️ governance save falhou: {_gov_exc}")
+
+            if panel_enabled and int(done) % max(1, int(panel_every_steps)) == 0:
+                try:
+                    panel_line = make_panel_line(
+                        {
+                            "status": str(learning_snapshot.get("status", "warmup")),
+                            "governance_policy": str(governance_snapshot.get("policy", "NORMAL")),
+                            "confidence": float(risk_snapshot.get("confidence_score", 0.0)),
+                            "delta14": float(learning_snapshot.get("baseline", {}).get("delta_q14_vs_baseline", 0.0)),
+                            "reward": float(learning_snapshot.get("metrics_main", {}).get("reward_mean", 0.0)),
+                            "entropy": float(structural_snapshot.get("entropia", 0.0)),
+                            "clone": float(structural_snapshot.get("clone_ratio", 0.0)),
+                            "coverage": float(structural_snapshot.get("cobertura_pares", 0.0)),
+                            "step": int(done),
+                            "concurso": int(concurso_n),
+                        }
+                    )
+                    print(panel_line, flush=True)
+                except Exception as _panel_exc:
+                    log(f"⚠️ painel desabilitado por falha: {_panel_exc}")
+                    panel_enabled = False
+
             if bool(learning_snapshot.get("should_log", False)):
                 trend = dict(learning_snapshot.get("trend", {}))
                 base = dict(learning_snapshot.get("baseline", {}))
@@ -1620,6 +1862,10 @@ def main() -> None:
                     "reward_history": reward_history[-50:],
                     "learning_monitor": learning_monitor.get_state(),
                     "learning_snapshot": learning_snapshot,
+                    "risk_snapshot": risk_snapshot,
+                    "structural_snapshot": structural_snapshot,
+                    "governance_snapshot": governance_snapshot,
+                    "governance_state": governance.get_state(),
                 }
                 checkpoint_manager.save(ck_state)
 
@@ -1743,11 +1989,18 @@ def main() -> None:
                             "policy": dict(learning_snapshot.get("policy", {})),
                             "metrics_main": dict(learning_snapshot.get("metrics_main", {})),
                         },
+                        "structural_monitor": dict(structural_snapshot),
+                        "risk_gate": dict(risk_snapshot),
+                        "governance": dict(governance_snapshot),
                     },
                 )
 
             if bool(auto_tuning_cfg.get("enabled", False)):
-                auto_tuner.run_if_due(int(meta_run_id) if meta_run_id is not None else int(run_id), int(done))
+                freeze_until = int(governance.history.get("autotuning_frozen_until_step", 0))
+                if int(done) < freeze_until:
+                    pass
+                else:
+                    auto_tuner.run_if_due(int(meta_run_id) if meta_run_id is not None else int(run_id), int(done))
 
             if int(args.summary_every) > 0 and done % int(args.summary_every) == 0:
                 log_smart_summary(
