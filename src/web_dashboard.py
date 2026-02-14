@@ -573,7 +573,7 @@ def api_gerar_fechamento_posicional():
                 hub,
                 context=context,
                 rng=rng,
-                selection_metadata={**meta, **{\"groups\": group_plan.metadata}},
+                selection_metadata={**meta, **{"groups": group_plan.metadata}},
             )
             results.append(fechamento_pos_to_json(result))
 

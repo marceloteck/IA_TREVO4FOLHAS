@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Painel de Execução — IA_TREVO4FOLHAS</title>
+  <style>
+    body{font-family:Arial,sans-serif;background:#0f172a;color:#e2e8f0;margin:0;padding:24px}
+    h1,h2{color:#93c5fd} .card{background:#111827;border:1px solid #334155;border-radius:10px;padding:14px;margin:12px 0}
+    code{background:#1f2937;padding:2px 6px;border-radius:5px} .cmd{white-space:pre-wrap;background:#020617;border:1px solid #334155;padding:10px;border-radius:8px}
+    button{background:#2563eb;color:#fff;border:0;border-radius:6px;padding:8px 10px;cursor:pointer;margin-right:8px}
+    input{background:#0b1220;color:#e2e8f0;border:1px solid #334155;border-radius:6px;padding:7px;width:420px;max-width:100%}
+    .muted{color:#94a3b8;font-size:.92rem}
+  </style>
+</head>
+<body>
+  <h1>Painel de Execução (CMD) — IA_TREVO4FOLHAS</h1>
+  <p class="muted">Use este arquivo para copiar e colar comandos no <strong>CMD</strong>. Botão “Abrir .bat” depende do caminho local do projeto no Windows.</p>
+
+  <div class="card">
+    <h2>Configuração local</h2>
+    <label>Caminho da pasta do projeto no Windows:</label><br>
+    <input id="rootPath" value="C:\\caminho\\IA_TREVO4FOLHAS" />
+    <p class="muted">Exemplo: <code>C:\\Users\\SeuUsuario\\Desktop\\IA_TREVO4FOLHAS</code></p>
+  </div>
+
+  <div id="list"></div>
+
+  <script>
+    const runs = [
+      {nome:'Instalar ambiente completo', bat:'1 - Install.bat', cmd:'cd /d "<ROOT>" && "1 - Install.bat"', cfg:'Cria venv, instala requirements, inicializa banco e mostra status.'},
+      {nome:'Inicializar banco', bat:'2 - Start_bd.bat', cmd:'cd /d "<ROOT>" && "2 - Start_bd.bat"', cfg:'Roda START\\startBD.py.'},
+      {nome:'Atualizar concursos', bat:'6 - update_concursos.bat', cmd:'cd /d "<ROOT>" && "6 - update_concursos.bat"', cfg:'Busca concursos novos e grava no SQLite.'},
+      {nome:'Treino incremental + backtest clássico', bat:'3 - Trainamento incremental.bat', cmd:'cd /d "<ROOT>" && "3 - Trainamento incremental.bat"', cfg:'Treina e executa backtest_engine (hours=5, block-size=150).'},
+      {nome:'Gerar próximo concurso (produção)', bat:'4 - gerar_proximo_concurso.bat', cmd:'cd /d "<ROOT>" && "4 - gerar_proximo_concurso.bat"', cfg:'Config padrão: perfil=agressivo, janela=300, per-brain=120, top-n=250, max-sim=0.78.'},
+      {nome:'Catálogo por cérebro', bat:'10 - gerar_catalogo_por_cerebro.bat', cmd:'cd /d "<ROOT>" && "10 - gerar_catalogo_por_cerebro.bat"', cfg:'Config padrão: size=15, janela=300, per-brain=80, top-brains=12, perfil=balanceado.'},
+      {nome:'Backtest smart (lote)', bat:'11 - backtest_smart.bat', cmd:'cd /d "<ROOT>" && "11 - backtest_smart.bat"', cfg:'Config padrão: steps=120, recent-window=220, avaliar-top-k=40, ucb-c=1.25.'},
+      {nome:'Backtest super inteligente', bat:'12 - backtest_super_inteligente.bat', cmd:'cd /d "<ROOT>" && "12 - backtest_super_inteligente.bat"', cfg:'Config autônoma com recipe bandit, revive parked, reward q15/q14.'},
+      {nome:'Backtest smart contínuo', bat:'13 - backtest_smart_continuo.bat', cmd:'cd /d "<ROOT>" && "13 - backtest_smart_continuo.bat"', cfg:'Modo contínuo: steps=0, minutes=0, summary/progress/save periódicos.'},
+      {nome:'Iniciar IA contínua', bat:'INICIAR INTELIGÊNCIA ARTIFICIAL.bat', cmd:'cd /d "<ROOT>" && "INICIAR INTELIGÊNCIA ARTIFICIAL.bat"', cfg:'Atalho principal para operação contínua.'},
+      {nome:'Status de aprendizado', bat:'7 - status_aprendizado.bat', cmd:'cd /d "<ROOT>" && "7 - status_aprendizado.bat"', cfg:'Resumo de concursos, checkpoint, cérebros e memória.'},
+      {nome:'Dashboard web', bat:'8 - start_dashboard.bat', cmd:'cd /d "<ROOT>" && "8 - start_dashboard.bat"', cfg:'Sobe Flask em http://0.0.0.0:5000.'},
+      {nome:'App desktop', bat:'9 - desktop_app.bat', cmd:'cd /d "<ROOT>" && "9 - desktop_app.bat"', cfg:'UI desktop para executar principais fluxos sem terminal.'},
+      {nome:'Atualizar banco com temp DBs', bat:'5 - update_bancoDeDAdos.bat', cmd:'cd /d "<ROOT>" && "5 - update_bancoDeDAdos.bat"', cfg:'Merge de bancos temporários via scripts\\merge_temp_dbs.py.'},
+      {nome:'Menu RUNNERS', bat:'RUNNERS\\MENU.bat', cmd:'cd /d "<ROOT>" && RUNNERS\\MENU.bat', cfg:'Menu com opções 01..10 para operação diária.'},
+      {nome:'Runner de relatório', bat:'RUNNERS\\08_report.bat', cmd:'cd /d "<ROOT>" && RUNNERS\\08_report.bat', cfg:'Gera report CLI + HTML do último run.'},
+      {nome:'Fechamentos combinatórios', bat:'fechamentos_bat\\combinatorio_FC*.bat', cmd:'cd /d "<ROOT>" && fechamentos_bat\\combinatorio_FC1.bat --qtd 1', cfg:'Troque FC1 por: FC1, FC2, FC3, FC4, FC5, FC6, FC8, FC9, FC34..FC44, FC73.'},
+      {nome:'Fechamentos posicionais', bat:'fechamentos_bat\\posicional_FC*.bat', cmd:'cd /d "<ROOT>" && fechamentos_bat\\posicional_FC76.bat --qtd 1', cfg:'Troque FC76 por: FC76, FC78, FC80, FC81, FC82, FC84..FC88, FC91..FC94, FC128..FC130.'},
+    ];
+
+    const list = document.getElementById('list');
+    const rootInput = document.getElementById('rootPath');
+
+    function render(){
+      list.innerHTML = '';
+      runs.forEach((r) => {
+        const root = rootInput.value.trim();
+        const cmd = r.cmd.replace('<ROOT>', root);
+        const batFile = r.bat.includes('\\') ? `${root}\\${r.bat}` : `${root}\\${r.bat}`;
+        const div = document.createElement('div');
+        div.className='card';
+        div.innerHTML = `<h2>${r.nome}</h2><p><strong>.bat:</strong> <code>${r.bat}</code></p><p class="muted">${r.cfg}</p><div class="cmd">${cmd}</div>`;
+
+        const b1 = document.createElement('button');
+        b1.textContent = 'Copiar comando';
+        b1.onclick = async () => {
+          try { await navigator.clipboard.writeText(cmd); alert('Comando copiado.'); }
+          catch { prompt('Copie manualmente:', cmd); }
+        };
+
+        const b2 = document.createElement('button');
+        b2.textContent='Abrir .bat';
+        b2.onclick = () => { window.open('file:///' + batFile.replaceAll('\\','/')); };
+
+        div.appendChild(b1);
+        div.appendChild(b2);
+        list.appendChild(div);
+      });
+    }
+
+    rootInput.addEventListener('input', render);
+    render();
+  </script>
+</body>
+</html>

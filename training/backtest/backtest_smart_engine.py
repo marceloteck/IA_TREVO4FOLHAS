@@ -9,6 +9,7 @@ import numpy as np
 import pickle
 import random
 import sqlite3
+import subprocess
 import sys
 import time
 from dataclasses import dataclass, field
@@ -433,21 +434,56 @@ def ensure_seed_recipes(conn: sqlite3.Connection, loaded_brains: Sequence[str]) 
 def fetch_brain_phase_scores(conn: sqlite3.Connection, recent_window: int) -> Dict[str, float]:
     if not safe_table_exists(conn, "cerebro_performance"):
         return {}
-    max_row = conn.execute("SELECT MAX(concurso_n) FROM cerebro_performance").fetchone()
+
+    perf_cols = {str(r[1]) for r in conn.execute("PRAGMA table_info(cerebro_performance)").fetchall()}
+    concurso_col = "concurso_n" if "concurso_n" in perf_cols else ("concurso" if "concurso" in perf_cols else None)
+    if concurso_col is None:
+        return {}
+
+    # Esquema novo/legado: (brain_id, acertos) vs (cerebro_id, qtd_14/qtd_15).
+    if {"brain_id", "acertos"}.issubset(perf_cols):
+        group_expr = "brain_id"
+        q15_expr = "SUM(CASE WHEN acertos >= 15 THEN 1 ELSE 0 END)"
+        q14_expr = "SUM(CASE WHEN acertos >= 14 THEN 1 ELSE 0 END)"
+    elif {"cerebro_id", "qtd_14", "qtd_15"}.issubset(perf_cols) and safe_table_exists(conn, "cerebros"):
+        group_expr = "c.brain_id"
+        q15_expr = "COALESCE(SUM(p.qtd_15), 0)"
+        q14_expr = "COALESCE(SUM(p.qtd_14), 0)"
+    else:
+        return {}
+
+    max_row = conn.execute(f"SELECT MAX({concurso_col}) FROM cerebro_performance").fetchone()
     max_n = int(max_row[0]) if max_row and max_row[0] is not None else 0
     min_n = max(1, max_n - int(recent_window) + 1)
-    rows = conn.execute(
-        """
-        SELECT brain_id,
-               SUM(CASE WHEN acertos >= 15 THEN 1 ELSE 0 END) AS q15,
-               SUM(CASE WHEN acertos >= 14 THEN 1 ELSE 0 END) AS q14,
-               COUNT(*) AS jogos
-          FROM cerebro_performance
-         WHERE concurso_n >= ?
-         GROUP BY brain_id
-        """,
-        (int(min_n),),
-    ).fetchall()
+
+    if group_expr == "brain_id":
+        rows = conn.execute(
+            f"""
+            SELECT {group_expr},
+                   {q15_expr} AS q15,
+                   {q14_expr} AS q14,
+                   COUNT(*) AS jogos
+              FROM cerebro_performance
+             WHERE {concurso_col} >= ?
+             GROUP BY {group_expr}
+            """,
+            (int(min_n),),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            f"""
+            SELECT {group_expr},
+                   {q15_expr} AS q15,
+                   {q14_expr} AS q14,
+                   COALESCE(SUM(p.jogos_gerados), 0) AS jogos
+              FROM cerebro_performance p
+              JOIN cerebros c ON c.id = p.cerebro_id
+             WHERE p.{concurso_col} >= ?
+             GROUP BY {group_expr}
+            """,
+            (int(min_n),),
+        ).fetchall()
+
     scores: Dict[str, float] = {}
     for brain_id, q15, q14, jogos in rows:
         jogos = max(1, int(jogos or 0))
@@ -938,6 +974,82 @@ def log_smart_summary(
     log("=========================================")
 
 
+
+
+
+
+def _ensure_user_tables(conn: sqlite3.Connection) -> None:
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS generated_batches (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          run_id INTEGER,
+          created_at TEXT,
+          concurso_alvo INTEGER,
+          mode TEXT,
+          tipo_jogo INTEGER,
+          fechamento_tipo TEXT,
+          pool_size INTEGER,
+          max_jogos INTEGER,
+          arm TEXT,
+          recipe TEXT,
+          brains_signature TEXT,
+          exploration_rate REAL,
+          seed INTEGER,
+          status TEXT DEFAULT 'pending'
+        );
+        CREATE INDEX IF NOT EXISTS idx_batches_alvo_status ON generated_batches(concurso_alvo, status);
+
+        CREATE TABLE IF NOT EXISTS generated_games (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          batch_id INTEGER,
+          dezenas_json TEXT,
+          score_internal REAL,
+          rank INTEGER
+        );
+        CREATE INDEX IF NOT EXISTS idx_games_batch ON generated_games(batch_id);
+
+        CREATE TABLE IF NOT EXISTS batch_results (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          batch_id INTEGER,
+          concurso_num INTEGER,
+          checked_at TEXT,
+          hit_max INTEGER,
+          hits_json TEXT,
+          best_game_id INTEGER
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS ux_batch_results_batch ON batch_results(batch_id);
+        """
+    )
+    conn.commit()
+
+def _bootstrap_database_if_missing_base() -> None:
+    """Garante schema/base mínima quando o DB está vazio ou sem tabela concursos."""
+    probe = get_conn()
+    try:
+        if safe_table_exists(probe, "concursos"):
+            return
+    finally:
+        probe.close()
+
+    log("[AUTO] Tabela 'concursos' ausente. Executando START/startBD.py automaticamente...")
+    cmd = [sys.executable, str(ROOT / "START" / "startBD.py")]
+    proc = subprocess.run(cmd, capture_output=True, text=True)
+    if proc.returncode != 0:
+        err_tail = (proc.stderr or proc.stdout or "").strip()[-1200:]
+        raise RuntimeError(
+            "Falha na criação automática do banco via START/startBD.py. "
+            "Execute manualmente 'python START/startBD.py'.\n" + err_tail
+        )
+
+
+def ensure_runtime_tables(conn: sqlite3.Connection) -> None:
+    """Cria tabelas de runtime opcionais para evitar falhas por schema parcial."""
+    ensure_smart_tables(conn)
+    ensure_meta_tables(conn)
+    ensure_memory_tables(conn)
+    _ensure_user_tables(conn)
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Backtest inteligente separado (N->N+1), focado em 14/15.")
     parser.add_argument("--steps", type=int, default=120, help="Quantidade de concursos para processar (0=infinito).")
@@ -981,19 +1093,18 @@ def main() -> None:
     random.seed(seed)
     np.random.seed(seed)
 
+    _bootstrap_database_if_missing_base()
     conn = get_conn()
     run_id = None
     meta_run_id = None
     try:
         if not safe_table_exists(conn, "concursos"):
-            raise RuntimeError("Tabela 'concursos' não existe. Rode START/startBD.py.")
+            raise RuntimeError("Tabela 'concursos' ainda não existe após bootstrap automático.")
 
+        ensure_runtime_tables(conn)
         if bool(performance_cfg.get("sqlite_optimize", True)):
             apply_sqlite_pragmas(conn, str(performance_cfg.get("profile", "low_cpu")))
         ensure_indexes(conn)
-        ensure_smart_tables(conn)
-        ensure_meta_tables(conn)
-        ensure_memory_tables(conn)
         checkpoint_manager = CheckpointManager(conn, checkpoint_cfg)
         memory_refiner = MemoryRefiner(conn, memory_refiner_cfg)
         strategy_validator = StrategyValidator(conn, validator_cfg, baseline_cfg)
