@@ -32,12 +32,15 @@ def test_reporting_cli_html_and_artifacts(tmp_path):
         tw = TelemetryWriter(conn, {"enabled": True})
         tw.log_run_artifact(1, "config_hash", "abc")
         tw.log_run_artifact(1, "seed", "123")
-        tw.log_summary_step(1, 20, {"mode": "production", "reward": 1.2})
+        tw.log_summary_step(1, 20, {"mode": "production", "reward": 1.2, "learning_monitor": {"status": "learning", "trend": {"delta_reward": 0.2}, "baseline": {"delta_q14_vs_baseline": 0.04}, "policy": {"force_mode": None, "rescue_mode": False}}})
         tw.log_experiment({"run_id": 1, "passes": True, "candidate_name": "x", "baseline_name": "b"})
 
         out = tmp_path / "run_1.html"
         generate_html_report(conn, 1, out, top_n=5)
         assert out.exists()
+        content = out.read_text(encoding="utf-8")
+        assert "Linha do tempo de status" in content
+        assert "Histórico de mudanças de modo" in content
     finally:
         conn.close()
 

@@ -44,6 +44,7 @@ from training.meta.promotion import PromotionManager
 from training.meta.regime_detector import detect_regime as detect_regime_v2
 from training.meta.reward_v2 import compute_reward_v2
 from training.meta.stagnation import StagnationTracker
+from training.meta.learning_monitor import LearningMonitor
 from training.memory.memory_audit import ensure_memory_tables
 from training.memory.memory_refiner import MemoryRefiner
 from training.perf.feature_cache import FeatureCache
@@ -64,6 +65,24 @@ def now_str() -> str:
 
 def log(msg: str) -> None:
     print(f"[{now_str()}] {msg}", flush=True)
+
+
+def _status_icon(status: str) -> str:
+    return {
+        "learning": "🟢",
+        "stable": "🟡",
+        "regressing": "🔴",
+        "warmup": "⚪",
+    }.get(str(status), "⚪")
+
+
+def _status_label(status: str) -> str:
+    return {
+        "learning": "APRENDENDO",
+        "stable": "ESTÁVEL",
+        "regressing": "REGREDINDO",
+        "warmup": "WARMUP",
+    }.get(str(status), "WARMUP")
 
 
 def load_json_config(path: Path, default: Dict[str, Any]) -> Dict[str, Any]:
@@ -1106,6 +1125,7 @@ def main() -> None:
     reporting_cfg = load_json_config(ROOT / "config" / "reporting.json", {"enabled": False})
     performance_cfg = load_json_config(ROOT / "config" / "performance.json", {"profile": "low_cpu"})
     auto_tuning_cfg = load_json_config(ROOT / "config" / "auto_tuning.json", {"enabled": False})
+    learning_monitor_cfg = load_json_config(ROOT / "config" / "learning_monitor.json", {"enabled": False})
 
     seed = int(args.seed) if args.seed is not None else random.SystemRandom().randint(1, 2_147_483_647)
     random.seed(seed)
@@ -1172,6 +1192,8 @@ def main() -> None:
         portfolio_builder = PortfolioBuilder(portfolio_cfg)
         ab_manager = ABTestingManager(ab_cfg)
         promotion_manager = PromotionManager(ab_cfg)
+        learning_monitor = LearningMonitor(learning_monitor_cfg)
+        learning_snapshot: Dict[str, Any] = {"status": "warmup", "policy": learning_monitor.policy.to_dict()}
         reward_history: List[float] = []
         last_mode = "production"
         last_decision_policy = {"arm": "", "recipe": "", "exploration_rate": 0.5, "brain_mask": []}
@@ -1200,6 +1222,7 @@ def main() -> None:
             "python_version": sys.version.split()[0],
             "platform": sys.platform,
             "seed": str(seed),
+            "learning_monitor_enabled": str(bool(learning_monitor_cfg.get("enabled", False))),
         }
         if bool(reporting_cfg.get("enabled", True)) and meta_run_id is not None:
             for k, v in artifacts.items():
@@ -1219,6 +1242,7 @@ def main() -> None:
             mode_manager.set_state(dict(resume_state.get("mode_manager", {})))
             stagnation_tracker.set_state(dict(resume_state.get("stagnation", {})))
             ab_manager.set_state(dict(resume_state.get("ab_testing", {})))
+            learning_monitor.set_state(dict(resume_state.get("learning_monitor", {})))
             reward_history = list(resume_state.get("reward_history", reward_history))
             done = int(resume_state.get("step", done))
             last_mode = str(resume_state.get("mode", last_mode))
@@ -1229,6 +1253,7 @@ def main() -> None:
             if restored_ref in trainable:
                 pos = (trainable.index(restored_ref) + 1) % max(1, len(trainable))
             _restore_brain_mask(hub, resume_state.get("policy", {}).get("brain_mask", []))
+            learning_snapshot = dict(resume_state.get("learning_snapshot", learning_snapshot))
             log(f"♻️ Auto-resume aplicado no step={done} concurso_ref={restored_ref}")
 
         while True:
@@ -1302,11 +1327,23 @@ def main() -> None:
                 if slots.get("candidate_recipes"):
                     decision["recipe"] = str(slots["candidate_recipes"][0])
 
-            if bool(stag_state_pre.get("rescue_mode", False)):
+            monitor_policy = dict(learning_snapshot.get("policy", {}))
+            if bool(stag_state_pre.get("rescue_mode", False)) or bool(monitor_policy.get("rescue_mode", False)):
                 decision["exploration_rate"] = min(
                     1.0,
                     float(decision.get("exploration_rate", 0.5)) + float(stagnation_cfg.get("rescue_exploration_boost", 0.10)),
                 )
+
+            decision["exploration_rate"] = max(
+                0.0,
+                min(1.0, float(decision.get("exploration_rate", 0.5)) + float(monitor_policy.get("exploration_delta", 0.0))),
+            )
+            decision["confidence"] = max(
+                0.0,
+                min(1.0, float(decision.get("confidence", 0.0)) * float(monitor_policy.get("confidence_mult", 1.0))),
+            )
+            if str(monitor_policy.get("force_mode", "")).strip() == "research":
+                mode = "research"
 
             arm_map = {a.name: a for a in arms}
             arm = arm_map.get(str(decision["arm"]), arm_default)
@@ -1418,6 +1455,24 @@ def main() -> None:
                 )
 
             reward_history.append(float(result["reward"]))
+            learning_snapshot = learning_monitor.update(
+                step=int(done),
+                hit_max=int(result["melhor_acerto"]),
+                reward=float(result["reward"]),
+                mode=str(mode),
+            )
+            if bool(learning_snapshot.get("should_log", False)):
+                trend = dict(learning_snapshot.get("trend", {}))
+                base = dict(learning_snapshot.get("baseline", {}))
+                log(
+                    f"{_status_icon(str(learning_snapshot.get('status', 'warmup')))} STATUS: "
+                    f"{_status_label(str(learning_snapshot.get('status', 'warmup')))} | "
+                    f"Δ14+={float(base.get('delta_q14_vs_baseline', 0.0))*100:+.2f}% | "
+                    f"reward={float(learning_snapshot.get('metrics_main', {}).get('reward_mean', 0.0)):+.3f} | "
+                    f"tend={float(trend.get('delta_reward', 0.0)):+.3f}"
+                )
+                if str(learning_snapshot.get("policy", {}).get("force_mode", "")) == "research":
+                    log("→ Mudando para modo PESQUISA (learning monitor)")
             step_timer.mark("evaluate_hits")
             last_diversity = float(diversity)
             last_hits_distribution = dict(result.get("hits_distribution", {}))
@@ -1563,6 +1618,8 @@ def main() -> None:
                     "last_diversity": float(last_diversity),
                     "last_hits_distribution": last_hits_distribution,
                     "reward_history": reward_history[-50:],
+                    "learning_monitor": learning_monitor.get_state(),
+                    "learning_snapshot": learning_snapshot,
                 }
                 checkpoint_manager.save(ck_state)
 
@@ -1679,6 +1736,13 @@ def main() -> None:
                         "diversity": float(diversity),
                         "fallback_used": int(decision.get("fallback_used", 0)),
                         "rescue_mode": bool(stag_state.get("rescue_mode", False)),
+                        "learning_monitor": {
+                            "status": str(learning_snapshot.get("status", "warmup")),
+                            "trend": dict(learning_snapshot.get("trend", {})),
+                            "baseline": dict(learning_snapshot.get("baseline", {})),
+                            "policy": dict(learning_snapshot.get("policy", {})),
+                            "metrics_main": dict(learning_snapshot.get("metrics_main", {})),
+                        },
                     },
                 )
 

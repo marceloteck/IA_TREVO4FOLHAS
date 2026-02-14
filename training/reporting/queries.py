@@ -170,3 +170,50 @@ def get_tuning_metrics(conn: sqlite3.Connection, run_id: int):
         "avg_step_seconds": avg_step_seconds,
         "baseline_fail": baseline_fail,
     }
+
+
+def learning_status_timeline(conn: sqlite3.Connection, run_id: int):
+    return _fetchall(
+        conn,
+        """
+        SELECT step,
+               CAST(json_extract(summary_json, '$.learning_monitor.status') AS TEXT) as status
+        FROM telemetry_step_summaries
+        WHERE run_id=?
+          AND json_extract(summary_json, '$.learning_monitor.status') IS NOT NULL
+        ORDER BY step ASC
+        """,
+        (int(run_id),),
+    )
+
+
+def learning_mode_changes(conn: sqlite3.Connection, run_id: int):
+    return _fetchall(
+        conn,
+        """
+        SELECT step,
+               CAST(json_extract(summary_json, '$.mode') AS TEXT) as mode,
+               CAST(json_extract(summary_json, '$.learning_monitor.policy.force_mode') AS TEXT) as forced_mode,
+               CAST(json_extract(summary_json, '$.learning_monitor.policy.rescue_mode') AS INTEGER) as rescue_mode
+        FROM telemetry_step_summaries
+        WHERE run_id=?
+        ORDER BY step ASC
+        """,
+        (int(run_id),),
+    )
+
+
+def learning_trend_series(conn: sqlite3.Connection, run_id: int):
+    return _fetchall(
+        conn,
+        """
+        SELECT step,
+               CAST(json_extract(summary_json, '$.learning_monitor.trend.delta_reward') AS REAL) as delta_reward,
+               CAST(json_extract(summary_json, '$.learning_monitor.baseline.delta_q14_vs_baseline') AS REAL) as delta_q14_baseline
+        FROM telemetry_step_summaries
+        WHERE run_id=?
+          AND json_extract(summary_json, '$.learning_monitor.status') IS NOT NULL
+        ORDER BY step ASC
+        """,
+        (int(run_id),),
+    )
