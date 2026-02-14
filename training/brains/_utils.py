@@ -7,7 +7,11 @@ UNIVERSO = list(range(1, 26))
 
 def weighted_sample_without_replacement(weights: Dict[int, float], k: int) -> List[int]:
     # método simples e leve: amostra repetida sem reposição
-    pool = UNIVERSO[:]
+    pool = [int(x) for x in weights.keys()]
+    if k <= 0 or not pool:
+        return []
+
+    k = min(int(k), len(pool))
     result = []
     for _ in range(k):
         w = [max(0.0001, float(weights.get(x, 0.001))) for x in pool]
