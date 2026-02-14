@@ -44,10 +44,19 @@ class MetaController:
             solver="adam",
             learning_rate_init=lr,
             max_iter=2,
-            batch_size=int(self.config.get("batch_size", 32)),
+            # batch_size dinâmico é definido no treino para evitar warning
+            # quando o lote disponível é menor que o valor configurado.
+            batch_size="auto",
             random_state=42,
             warm_start=False,
         )
+
+    def _apply_effective_batch_size(self, sample_count: int) -> None:
+        configured_batch_size = int(self.config.get("batch_size", 32))
+        effective_batch_size = max(1, min(configured_batch_size, int(sample_count)))
+        self.arm_model.batch_size = effective_batch_size
+        self.recipe_model.batch_size = effective_batch_size
+        self.explore_model.batch_size = effective_batch_size
 
     def _load_checkpoint(self) -> None:
         state = self.model_store.load()
@@ -179,6 +188,7 @@ class MetaController:
         y_arm_arr = np.array([item["arm"] for item in batch])
         y_recipe_arr = np.array([item["recipe"] for item in batch])
         y_exp_arr = np.array([item["exp"] for item in batch])
+        self._apply_effective_batch_size(sample_count=len(x))
 
         self.arm_classes = np.array(sorted(set((self.arm_classes.tolist() if self.arm_classes is not None else []) + y_arm_arr.tolist())))
         self.recipe_classes = np.array(sorted(set((self.recipe_classes.tolist() if self.recipe_classes is not None else []) + y_recipe_arr.tolist())))
