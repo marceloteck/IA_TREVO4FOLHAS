@@ -19,6 +19,12 @@ class MemoryRefiner:
         self.cfg = dict(cfg or {})
         self.enabled = bool(self.cfg.get("enabled", True))
         ensure_memory_tables(self.conn)
+        row = self.conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='memoria_jogos'"
+        ).fetchone()
+        if row is not None:
+            self.conn.execute("CREATE INDEX IF NOT EXISTS idx_memoria_jogos_origem ON memoria_jogos(origem)")
+            self.conn.commit()
 
     def _get_last_id(self) -> int:
         row = self.conn.execute("SELECT last_memoria_id FROM memory_refiner_state WHERE id=1").fetchone()
@@ -41,6 +47,17 @@ class MemoryRefiner:
             "SELECT COUNT(*) FROM memoria_jogos WHERE origem=?", (str(origem),)
         ).fetchone()
         return int(row[0]) if row and row[0] is not None else 0
+
+    def _strategy_recent_counts(self, origens: set[str]) -> dict[str, int]:
+        if not origens:
+            return {}
+
+        placeholders = ",".join("?" for _ in origens)
+        rows = self.conn.execute(
+            f"SELECT origem, COUNT(*) FROM memoria_jogos WHERE origem IN ({placeholders}) GROUP BY origem",
+            tuple(str(o) for o in origens),
+        ).fetchall()
+        return {str(origem): int(total) for origem, total in rows}
 
     def run_batch(self, batch_size: int = 1000) -> dict:
         if not self.enabled:
@@ -69,6 +86,7 @@ class MemoryRefiner:
 
         n_gold = n_quar = n_ign = 0
         max_id = last_id
+        strategy_counts = self._strategy_recent_counts({str(row[-1] or "") for row in rows})
 
         for row in rows:
             (
@@ -80,7 +98,7 @@ class MemoryRefiner:
                 origem,
             ) = row
             dezenas = [int(x) for x in dezenas_raw if x is not None]
-            strategy_recent_count = self._strategy_recent_count(str(origem or ""))
+            strategy_recent_count = int(strategy_counts.get(str(origem or ""), 0))
 
             dup_row = self.conn.execute(
                 "SELECT 1 FROM memoria_jogos_gold WHERE dezenas_json=? LIMIT 1",

@@ -76,3 +76,19 @@ def test_memory_refiner_batches_and_compression():
         assert raw_count == 300
     finally:
         conn.close()
+
+
+def test_memory_refiner_uses_grouped_strategy_count():
+    conn = sqlite3.connect(":memory:")
+    try:
+        _create_raw_memoria(conn)
+        ensure_memory_tables(conn)
+        refiner = MemoryRefiner(conn, {"enabled": True, "batch_size": 50})
+
+        counts = refiner._strategy_recent_counts({"smart:a:r:1", "smart:a:r:3", "inexistente"})
+
+        assert counts["smart:a:r:1"] > 0
+        assert counts["smart:a:r:3"] > 0
+        assert counts.get("inexistente", 0) == 0
+    finally:
+        conn.close()
