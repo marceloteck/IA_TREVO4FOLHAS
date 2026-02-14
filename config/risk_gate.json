@@ -1,0 +1,10 @@
+{
+  "enabled": true,
+  "confidence_green": 0.65,
+  "confidence_red": 0.45,
+  "variance_weight": 0.25,
+  "trend_weight": 0.30,
+  "reward_weight": 0.30,
+  "delta14_weight": 0.40,
+  "variance_window": 60
+}

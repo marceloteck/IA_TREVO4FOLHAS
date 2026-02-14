@@ -217,3 +217,16 @@ def learning_trend_series(conn: sqlite3.Connection, run_id: int):
         """,
         (int(run_id),),
     )
+
+
+def governance_timeline(conn: sqlite3.Connection, run_id: int):
+    return _fetchall(
+        conn,
+        """
+        SELECT step, status, confidence, delta14, reward_avg, trend, policy, reason
+        FROM governance_decisions
+        WHERE run_id=?
+        ORDER BY step ASC
+        """,
+        (int(run_id),),
+    )

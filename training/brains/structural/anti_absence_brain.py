@@ -32,6 +32,8 @@ class StructuralAntiAbsenceBrain(BaseBrain):
         self.core_b = core_b or [1, 4, 5, 9, 13, 17, 20, 21, 22, 25]
         self.janela_recente = int(janela_recente)
         self.state = self.state or {"core_c": []}
+        self._core_c_cache_key: Tuple[int, int] | None = None
+        self._core_c_cache: List[int] = []
 
     def evaluate_context(self, context: Dict[str, Any]) -> float:
         historico = context.get("historico_recente") or []
@@ -93,6 +95,10 @@ class StructuralAntiAbsenceBrain(BaseBrain):
 
     def _build_core_c(self, context: Dict[str, Any]) -> List[int]:
         historico = context.get("historico_recente") or []
+        cache_key = (id(historico), len(historico))
+        if self._core_c_cache_key == cache_key and self._core_c_cache:
+            return list(self._core_c_cache)
+
         recent = historico[-self.janela_recente :] if historico else []
         coocc = Counter()
         for jogo in recent:
@@ -106,4 +112,6 @@ class StructuralAntiAbsenceBrain(BaseBrain):
             score_map[b] += score
         ranked = sorted(score_map.items(), key=lambda x: x[1], reverse=True)
         core_c = [d for d, _ in ranked[:5]]
+        self._core_c_cache_key = cache_key
+        self._core_c_cache = list(core_c)
         return core_c

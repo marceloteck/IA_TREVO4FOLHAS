@@ -18,7 +18,7 @@ class PortfolioBuilder:
             return [c["dezenas"] for c in sorted(candidates, key=lambda x: float(x.get("score", 0.0)), reverse=True)[: int(max_games)]]
 
         mode_cfg = self._mode_cfg(mode)
-        max_clone = float(mode_cfg.get("max_clone_jaccard", 0.70))
+        max_clone = float((quotas or {}).get("max_clone_jaccard_override", mode_cfg.get("max_clone_jaccard", 0.70)))
         quota_even = set(int(x) for x in mode_cfg.get("quota_even", []))
         sum_ranges = [tuple(r) for r in mode_cfg.get("quota_sum_ranges", [])]
 
@@ -77,4 +77,25 @@ class PortfolioBuilder:
                 if len(selected) >= int(max_games):
                     break
 
-        return [list(x["dezenas"]) for x in selected[: int(max_games)]]
+        final_selected = selected[: int(max_games)]
+        # Camada superior opcional: coverage optimizer (fallback total para fluxo antigo)
+        cov_opt = None
+        try:
+            cov_opt = (quotas or {}).get("coverage_optimizer")
+        except Exception:
+            cov_opt = None
+        if cov_opt is not None:
+            try:
+                alpha_boost = float((quotas or {}).get("coverage_alpha_boost", 0.0))
+                is_stag = bool((quotas or {}).get("structural_stagnation", False))
+                base_alpha = float(getattr(cov_opt, "alpha", 0.25))
+                stag_alpha = float(getattr(cov_opt, "stagnation_alpha", 0.40))
+                alpha = max(base_alpha, stag_alpha) if is_stag else base_alpha
+                alpha += alpha_boost
+                optimized = cov_opt.optimize(final_selected, int(max_games), alpha=alpha)
+                if optimized:
+                    return [list(g) for g in optimized[: int(max_games)]]
+            except Exception:
+                pass
+
+        return [list(x["dezenas"]) for x in final_selected]

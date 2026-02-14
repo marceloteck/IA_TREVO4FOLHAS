@@ -1,0 +1,42 @@
+{
+  "enabled": true,
+  "policies": {
+    "SAFE": {
+      "max_games_mult": 0.6,
+      "pool_size_delta": 2,
+      "coverage_alpha": 0.45,
+      "min_pair_coverage": 0.35,
+      "max_clone_jaccard": 0.70
+    },
+    "NORMAL": {
+      "max_games_mult": 1.0,
+      "pool_size_delta": 0,
+      "coverage_alpha": 0.25,
+      "min_pair_coverage": 0.30,
+      "max_clone_jaccard": 0.75
+    },
+    "AGGRESSIVE": {
+      "max_games_mult": 1.2,
+      "pool_size_delta": -1,
+      "coverage_alpha": 0.20,
+      "min_pair_coverage": 0.28,
+      "max_clone_jaccard": 0.78
+    }
+  },
+  "decision_rules": {
+    "warmup_policy": "SAFE",
+    "green_min_consecutive_updates": 3,
+    "red_min_consecutive_updates": 3,
+    "confidence_green": 0.65,
+    "confidence_red": 0.45,
+    "delta14_green": 0.03,
+    "delta14_red": -0.03,
+    "structural_stagnation_forces_safe": true
+  },
+  "anti_self_deception": {
+    "freeze_autotuning_on_red": true,
+    "freeze_autotuning_steps": 500,
+    "block_aggressive_on_red": true,
+    "min_updates_before_allow_aggressive": 10
+  }
+}
