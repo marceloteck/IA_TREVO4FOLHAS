@@ -15,6 +15,7 @@ echo 6 - Conferir acertos pendentes
 echo 7 - Rodar Memory Refiner
 echo 8 - Gerar relatorio CLI + HTML
 echo 9 - AUTO pos-concurso (update + check + treino)
+echo 10 - Prever próximo concurso (backtest_v2_predict_next)
 echo A - Iniciar IA continua (BAT principal)
 echo 0 - Sair
 set /p OP=Escolha: 
@@ -28,6 +29,7 @@ if "%OP%"=="6" call "%~dp0\06_check_acertos.bat"
 if "%OP%"=="7" call "%~dp0\07_memory_refiner.bat"
 if "%OP%"=="8" call "%~dp0\08_report.bat"
 if "%OP%"=="9" call "%~dp0\09_auto_pos_concurso.bat"
+if "%OP%"=="10" call "%~dp0\10_predict_next.bat"
 if /I "%OP%"=="A" call "%~dp0\..\INICIAR INTELIGÊNCIA ARTIFICIAL.bat"
 if "%OP%"=="0" goto end
 
