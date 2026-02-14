@@ -6,7 +6,7 @@ chcp 65001 >nul
 if exist "venv\Scripts\activate.bat" call "venv\Scripts\activate.bat"
 
 echo [RUN] Gerando jogos (pesquisa)
-python training\user\generate_for_user.py --mode research
+python -u training\user\generate_for_user.py --mode research
 if errorlevel 1 (
   echo [ERRO] Falha ao gerar jogos de pesquisa.
   pause

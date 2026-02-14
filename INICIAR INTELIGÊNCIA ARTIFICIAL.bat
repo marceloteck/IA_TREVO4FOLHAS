@@ -22,7 +22,7 @@ if exist "venv\Scripts\activate.bat" (
 :loop
 echo.
 echo [RUN] Iniciando ciclo continuo da IA em %date% %time%
-python -m training.backtest.backtest_smart_engine --steps 0 --minutes 0 --progress-every 5 --summary-every 50 --save-every 10 --run-name inteligencia_artificial_continua
+python -u -m training.backtest.backtest_smart_engine --steps 0 --minutes 0 --progress-every 5 --summary-every 50 --save-every 10 --run-name inteligencia_artificial_continua
 set "RC=%ERRORLEVEL%"
 
 if "%RC%"=="0" (

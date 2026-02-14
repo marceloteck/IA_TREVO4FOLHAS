@@ -55,6 +55,7 @@ from training.reporting.telemetry_writer import TelemetryWriter
 from training.validation.validator import StrategyValidator
 from training.tuning.auto_tuner import AutoTuner
 from training.utils.comparador import contar_acertos
+from training.utils.progress import Heartbeat, ProgressPrinter, StepTimer
 
 
 def now_str() -> str:
@@ -62,7 +63,7 @@ def now_str() -> str:
 
 
 def log(msg: str) -> None:
-    print(f"[{now_str()}] {msg}")
+    print(f"[{now_str()}] {msg}", flush=True)
 
 
 def load_json_config(path: Path, default: Dict[str, Any]) -> Dict[str, Any]:
@@ -1051,6 +1052,12 @@ def ensure_runtime_tables(conn: sqlite3.Connection) -> None:
     _ensure_user_tables(conn)
 
 def main() -> None:
+    try:
+        sys.stdout.reconfigure(line_buffering=True)
+        sys.stderr.reconfigure(line_buffering=True)
+    except Exception:
+        pass
+
     parser = argparse.ArgumentParser(description="Backtest inteligente separado (N->N+1), focado em 14/15.")
     parser.add_argument("--steps", type=int, default=120, help="Quantidade de concursos para processar (0=infinito).")
     parser.add_argument("--minutes", type=int, default=0, help="Parada por tempo em minutos.")
@@ -1071,7 +1078,18 @@ def main() -> None:
     parser.add_argument("--min-mem", type=int, default=12, help="Mínimo de acertos para ir à memória forte.")
     parser.add_argument("--run-name", type=str, default="smart_backtest", help="Nome lógico da rodada.")
     parser.add_argument("--seed", type=int, default=None, help="Seed opcional para reprodutibilidade.")
+    parser.add_argument("--heartbeat-seconds", type=int, default=15, help="Intervalo do heartbeat para evitar tela sem logs.")
+    parser.add_argument("--profile-steps", type=int, default=0, help="Se 1, imprime tempo por fase em cada resumo de progresso.")
     args = parser.parse_args()
+
+    progress = ProgressPrinter(
+        progress_every_steps=int(args.progress_every),
+        heartbeat_seconds=int(args.heartbeat_seconds),
+        profile_steps=bool(int(args.profile_steps)),
+    )
+    step_timer = StepTimer()
+    heartbeat = Heartbeat(progress, seconds=int(args.heartbeat_seconds), freeze_warn_seconds=max(60, int(args.heartbeat_seconds) * 4))
+    heartbeat.start()
 
     meta_config = load_json_config(ROOT / "config" / "meta_controller.json", {"enabled": False})
     diversity_cfg = load_json_config(ROOT / "config" / "diversity.json", {"enabled": False})
@@ -1226,6 +1244,9 @@ def main() -> None:
             concurso_n = int(trainable[pos])
             pos += 1
 
+            step_timer.start_step()
+            progress.set_state(step=int(done + 1), concurso=concurso_n, phase="features")
+
             context_probe = build_context(conn, concurso_n, 80)
             regime = detect_regime(context_probe)
             phase_scores = fetch_brain_phase_scores(conn, int(args.recent_window))
@@ -1324,6 +1345,8 @@ def main() -> None:
                 )
                 conn.commit()
 
+            step_timer.mark("features")
+            progress.set_state(phase="generate_candidates", mode=mode, regime=regime, arm=arm.name, recipe=recipe.name)
             result = run_step(
                 conn=conn,
                 hub=hub,
@@ -1342,6 +1365,8 @@ def main() -> None:
                 experimental_brains=slots.get("candidate_brains", []),
                 memory_refiner_cfg=memory_refiner_cfg,
             )
+            step_timer.mark("generate_candidates")
+            progress.set_state(phase="evaluate_hits")
 
             a = arm_stats[arm.name]
             a.pulls += 1
@@ -1364,6 +1389,7 @@ def main() -> None:
                 result.get("evaluated_games", []),
                 pair_sample_max=int(diversity_cfg.get("pair_sample_max", 200)),
             ) if bool(diversity_cfg.get("enabled", True)) else max(0.0, min(1.0, 1.0 - float(result.get("repeat_rate", 0.0))))
+            step_timer.mark("build_portfolio")
 
             baseline_n = min(20, len(reward_history))
             baseline = (sum(reward_history[-baseline_n:]) / float(baseline_n)) if baseline_n > 0 else float(result.get("legacy_reward", 0.0))
@@ -1392,6 +1418,7 @@ def main() -> None:
                 )
 
             reward_history.append(float(result["reward"]))
+            step_timer.mark("evaluate_hits")
             last_diversity = float(diversity)
             last_hits_distribution = dict(result.get("hits_distribution", {}))
 
@@ -1500,6 +1527,8 @@ def main() -> None:
                 )
                 conn.commit()
 
+            step_timer.mark("train_meta")
+            progress.set_state(phase="checkpoint")
             ck_enabled = bool(checkpoint_cfg.get("enabled", False))
             save_every = max(1, int(checkpoint_cfg.get("save_every_steps", 5)))
             mode_switched = mode != str(prev_mode)
@@ -1537,6 +1566,8 @@ def main() -> None:
                 }
                 checkpoint_manager.save(ck_state)
 
+            step_timer.mark("checkpoint")
+            progress.set_state(phase="db_commit")
             if bool(memory_refiner_cfg.get("enabled", False)) and done % max(1, int(memory_refiner_cfg.get("batch_size", 2000) // 400)) == 0:
                 try:
                     memory_refiner.run_batch(batch_size=int(memory_refiner_cfg.get("batch_size", 2000)))
@@ -1607,27 +1638,32 @@ def main() -> None:
             if done % max(1, int(args.save_every)) == 0:
                 hub.save_all()
 
-            if done % max(1, int(args.progress_every)) == 0:
+            step_timer.mark("db_commit")
+            phases = step_timer.end_step()
+            progress.set_state(phase="idle")
+            if done == 1 or done % max(1, int(args.progress_every)) == 0:
                 best_arm = max(arm_stats.items(), key=lambda kv: kv[1].mean_reward)
                 best_recipe = max(recipe_stats.items(), key=lambda kv: kv[1].mean_reward)
-                log(
-                    " | ".join(
-                        [
-                            f"step={done}",
-                            f"N={concurso_n}->{concurso_n + 1}",
-                            f"regime={result.get('regime', 'neutro')}",
-                            f"mode={mode}",
-                            f"arm={arm.name}",
-                            f"recipe={recipe.name}({recipes[recipe.name].status})",
-                            f"reward={result['reward']:.2f}",
-                            f"hit_max={result['melhor_acerto']}",
-                            f"14+={totals['q14']}",
-                            f"15={totals['q15']}",
-                            f"best_arm={best_arm[0]}({best_arm[1].mean_reward:.2f})",
-                            f"best_recipe={best_recipe[0]}({best_recipe[1].mean_reward:.2f})",
-                        ]
-                    )
+                progress.log_step(
+                    {
+                        "step": done,
+                        "N_from": concurso_n,
+                        "N_to": concurso_n + 1,
+                        "regime": result.get("regime", "neutro"),
+                        "mode": mode,
+                        "arm": arm.name,
+                        "recipe": f"{recipe.name}({recipes[recipe.name].status})",
+                        "reward": result["reward"],
+                        "hit_max": result["melhor_acerto"],
+                        "total_14p": totals["q14"],
+                        "total_15": totals["q15"],
+                        "best_arm": f"{best_arm[0]}({best_arm[1].mean_reward:.2f})",
+                        "best_recipe": f"{best_recipe[0]}({best_recipe[1].mean_reward:.2f})",
+                        "elapsed_step_s": phases.get("total", 0.0),
+                    }
                 )
+                if bool(int(args.profile_steps)):
+                    progress.log_phases(phases)
 
             rep_every = max(1, int(reporting_cfg.get("summary_every_steps", 200)))
             if bool(reporting_cfg.get("enabled", True)) and meta_run_id is not None and done % rep_every == 0:
@@ -1671,6 +1707,10 @@ def main() -> None:
         log(f"📚 Receitas aprendidas no banco: {len(recipes)}")
         log("=========================================")
     finally:
+        try:
+            heartbeat.stop()
+        except Exception:
+            pass
         try:
             if run_id is not None:
                 finish_smart_run(conn, int(run_id))
