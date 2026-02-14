@@ -18,7 +18,7 @@ echo [INFO] Aprendizado em tempo real ativo.
 echo [INFO] Para parar manualmente, use CTRL+C.
 echo.
 
-python -m training.backtest.backtest_smart_engine --steps 0 --minutes 0 --progress-every 5 --summary-every 50 --save-every 10 --run-name runner_continuo
+python -u -m training.backtest.backtest_smart_engine --steps 0 --minutes 0 --progress-every 5 --summary-every 50 --save-every 10 --run-name runner_continuo
 
 if errorlevel 1 (
   echo.

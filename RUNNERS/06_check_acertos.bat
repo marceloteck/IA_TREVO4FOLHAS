@@ -6,7 +6,7 @@ chcp 65001 >nul
 if exist "venv\Scripts\activate.bat" call "venv\Scripts\activate.bat"
 
 echo [RUN] Conferindo acertos pendentes
-python training\user\check_hits_pending.py --auto
+python -u training\user\check_hits_pending.py --auto
 if errorlevel 1 (
   echo [ERRO] Falha ao conferir acertos pendentes.
   pause

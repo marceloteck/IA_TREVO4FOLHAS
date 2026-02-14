@@ -74,18 +74,18 @@ if errorlevel 1 (
 if "%DRYRUN%"=="1" (
     if defined SEED (
         echo [INFO] Executando com --dry-run e --seed %SEED% >> "%LOG%"
-        python "%SCRIPT%" --tipo %TIPO% --max-jogos %MAX_JOGOS% --pool-size %POOL_SIZE% --dry-run --seed %SEED% >> "%LOG%" 2>&1
+        python -u "%SCRIPT%" --tipo %TIPO% --max-jogos %MAX_JOGOS% --pool-size %POOL_SIZE% --dry-run --seed %SEED% >> "%LOG%" 2>&1
     ) else (
         echo [INFO] Executando com --dry-run >> "%LOG%"
-        python "%SCRIPT%" --tipo %TIPO% --max-jogos %MAX_JOGOS% --pool-size %POOL_SIZE% --dry-run >> "%LOG%" 2>&1
+        python -u "%SCRIPT%" --tipo %TIPO% --max-jogos %MAX_JOGOS% --pool-size %POOL_SIZE% --dry-run >> "%LOG%" 2>&1
     )
 ) else (
     if defined SEED (
         echo [INFO] Executando com --seed %SEED% >> "%LOG%"
-        python "%SCRIPT%" --tipo %TIPO% --max-jogos %MAX_JOGOS% --pool-size %POOL_SIZE% --seed %SEED% >> "%LOG%" 2>&1
+        python -u "%SCRIPT%" --tipo %TIPO% --max-jogos %MAX_JOGOS% --pool-size %POOL_SIZE% --seed %SEED% >> "%LOG%" 2>&1
     ) else (
         echo [INFO] Executando sem dry-run >> "%LOG%"
-        python "%SCRIPT%" --tipo %TIPO% --max-jogos %MAX_JOGOS% --pool-size %POOL_SIZE% >> "%LOG%" 2>&1
+        python -u "%SCRIPT%" --tipo %TIPO% --max-jogos %MAX_JOGOS% --pool-size %POOL_SIZE% >> "%LOG%" 2>&1
     )
 )
 
