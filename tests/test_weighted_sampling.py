@@ -35,20 +35,23 @@ def test_weighted_sample_smoke_distribution_bias():
     assert counts[1] > counts[4]
 
 
-def test_weighted_sample_handles_zero_or_negative_weights():
+def test_weighted_sample_excludes_zero_or_negative_weights():
     rng = random.Random(123)
     picks = weighted_sample_without_replacement({1: 0.0, 2: -1.0, 3: 0.0, 4: 2.0}, 3, rng=rng)
-    assert len(picks) == 3
-    assert len(set(picks)) == 3
-    assert set(picks).issubset({1, 2, 3, 4})
+    assert picks == [4]
+
+
+def test_weighted_sample_returns_empty_when_no_positive_weight():
+    picks = weighted_sample_without_replacement({1: 0.0, 2: -2.0}, 2, rng=random.Random(9))
+    assert picks == []
 
 
 def test_weighted_sample_large_n_perf_smoke():
-    weights = {i: float((i % 17) + 1) for i in range(1, 10_001)}
+    weights = {i: float((i % 17) + 1) for i in range(1, 50_001)}
     t0 = time.perf_counter()
-    picks = weighted_sample_without_replacement(weights, 15, rng=random.Random(999))
+    picks = weighted_sample_without_replacement(weights, 100, rng=random.Random(999))
     dt = time.perf_counter() - t0
 
-    assert len(picks) == 15
-    assert len(set(picks)) == 15
-    assert dt < 1.5
+    assert len(picks) == 100
+    assert len(set(picks)) == 100
+    assert dt < 2.5

@@ -81,9 +81,6 @@ def _normalized_from_weights(weights: Dict[int, float]) -> tuple[List[int], List
         pool.append(int(k))
         w.append(max(0.0, float(v)))
     total = float(sum(w))
-    if total <= 0.0 and pool:
-        w = [1.0 for _ in pool]
-        total = float(len(pool))
 
     _NORM_CACHE[key] = (list(pool), list(w), float(total))
     _NORM_CACHE.move_to_end(key)
@@ -92,55 +89,56 @@ def _normalized_from_weights(weights: Dict[int, float]) -> tuple[List[int], List
     return pool, w, total
 
 
+def _sample_simple_without_replacement(pool: List[int], w: List[float], remaining: int, rng: random.Random | None = None) -> List[int]:
+    rr = rng if isinstance(rng, random.Random) else random
+    items = list(pool)
+    weights = [max(0.0, float(x)) for x in w]
+    picks: List[int] = []
+    remaining = max(0, min(int(remaining), len(items)))
+    for _ in range(remaining):
+        total = float(sum(weights))
+        if total <= 0.0:
+            break
+        target = rr.random() * total
+        acc = 0.0
+        idx = -1
+        for i, wi in enumerate(weights):
+            acc += wi
+            if acc >= target:
+                idx = i
+                break
+        if idx < 0:
+            idx = len(items) - 1
+        picks.append(int(items.pop(idx)))
+        weights.pop(idx)
+    return picks
+
+
+def _sample_es_without_replacement(pool: List[int], w: List[float], remaining: int, rng: random.Random | None = None) -> List[int]:
+    rr = rng if isinstance(rng, random.Random) else random
+    remaining = max(0, min(int(remaining), len(pool)))
+    if remaining <= 0:
+        return []
+    heap: List[tuple[float, int]] = []
+    eps = 1e-12
+    for item, wi in zip(pool, w):
+        weight = max(eps, min(float(wi), 1e12))
+        u = max(eps, min(1.0 - eps, rr.random()))
+        key = math.log(u) / weight
+        if len(heap) < remaining:
+            heapq.heappush(heap, (key, int(item)))
+        elif key > heap[0][0]:
+            heapq.heapreplace(heap, (key, int(item)))
+    return [int(x[1]) for x in heap]
+
+
 def _fallback_weighted_sample(pool: List[int], w: List[float], remaining: int, rng: random.Random | None = None) -> List[int]:
     remaining = max(0, min(int(remaining), len(pool)))
     if remaining <= 0:
         return []
-
-    rr = rng if isinstance(rng, random.Random) else random
-    try:
-        import numpy as np
-
-        arr = np.array([max(0.0, float(x)) for x in w], dtype=float)
-        total = float(arr.sum())
-        if total <= 0.0:
-            idx = np.random.choice(len(pool), size=remaining, replace=False)
-            return [int(pool[int(i)]) for i in idx.tolist()]
-        probs = arr / total
-        idx = np.random.choice(len(pool), size=remaining, replace=False, p=probs)
-        return [int(pool[int(i)]) for i in idx.tolist()]
-    except Exception:
-        pass
-
-    positives: List[tuple[int, float]] = []
-    zeros: List[int] = []
-    for i, item in enumerate(pool):
-        wi = max(0.0, float(w[i]))
-        if wi > 0.0:
-            positives.append((int(item), wi))
-        else:
-            zeros.append(int(item))
-
-    if not positives:
-        rr.shuffle(zeros)
-        return zeros[:remaining]
-
-    # Efraimidis–Spirakis (A-Res) com heap mínimo (O(n log k)).
-    k_eff = min(remaining, len(positives))
-    heap: List[tuple[float, int]] = []
-    for item, wi in positives:
-        u = max(1e-12, rr.random())
-        key = math.log(u) / wi
-        if len(heap) < k_eff:
-            heapq.heappush(heap, (key, int(item)))
-        elif key > heap[0][0]:
-            heapq.heapreplace(heap, (key, int(item)))
-
-    out = [int(x[1]) for x in heap]
-    if len(out) < remaining and zeros:
-        rr.shuffle(zeros)
-        out.extend(zeros[: remaining - len(out)])
-    return out
+    if len(pool) <= 500:
+        return _sample_simple_without_replacement(pool, w, remaining, rng=rng)
+    return _sample_es_without_replacement(pool, w, remaining, rng=rng)
 
 
 def weighted_sample_without_replacement(
@@ -171,29 +169,15 @@ def weighted_sample_without_replacement(
         max_s = float(perf.get("weighted_sample_max_s", 10.0))
     max_s = max(0.05, float(max_s))
 
+    positive_pairs = [(int(item), max(0.0, float(wi))) for item, wi in zip(pool, w) if float(wi) > 0.0]
+    if not positive_pairs:
+        return []
+    pool = [p[0] for p in positive_pairs]
+    w = [p[1] for p in positive_pairs]
+
     k = min(int(k), len(pool))
     started = time.perf_counter()
     last_hb = started
-
-    # caminho rápido com numpy
-    if bool(safe_fallback):
-        try:
-            import numpy as np
-
-            arr = np.array(pool, dtype=int)
-            ww = np.array([max(0.0, float(x)) for x in w], dtype=float)
-            if float(ww.sum()) <= 0.0:
-                idx = np.random.choice(len(arr), size=k, replace=False)
-            else:
-                probs = ww / float(ww.sum())
-                idx = np.random.choice(len(arr), size=k, replace=False, p=probs)
-            result_fast = sorted(int(arr[int(i)]) for i in idx.tolist())
-            dt_ms = (time.perf_counter() - started) * 1000.0
-            if dt_ms > float(perf.get("weighted_sample_perf_log_ms", 200.0)):
-                print(f"perf: weighted_sample_without_replacement took {dt_ms:.1f}ms n={len(pool)} k={k}", flush=True)
-            return result_fast
-        except Exception:
-            pass
 
     result = _fallback_weighted_sample(pool, w, k, rng=rng)
 

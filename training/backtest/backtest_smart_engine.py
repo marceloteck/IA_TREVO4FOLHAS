@@ -14,6 +14,7 @@ import sqlite3
 import subprocess
 import sys
 import time
+import traceback
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -65,6 +66,9 @@ from training.utils.comparador import contar_acertos
 from training.utils.progress import Heartbeat, ProgressPrinter, StepTimer
 from training.utils.console_panel import make_panel_line
 from training.brains._utils import configure_weighted_sampling_runtime
+
+
+CHECKPOINT_SCHEMA_VERSION = 2
 
 
 def now_str() -> str:
@@ -163,8 +167,10 @@ def _normalize_resume_state(resume_state: Dict[str, Any], trainable: Sequence[in
     out = dict(resume_state)
     step_prev = int(out.get("step_global", out.get("step", done)))
     conc_prev = int(out.get("concurso_ref", 0))
+    schema_version = int(out.get("schema_version", 1) or 1)
+    out["schema_version"] = int(max(schema_version, CHECKPOINT_SCHEMA_VERSION))
     if not trainable:
-        out["step_global"] = max(0, step_prev)
+        out["step_global"] = max(int(done), 0, step_prev)
         out["step"] = out["step_global"]
         return out, "normal", step_prev, conc_prev
 
@@ -173,22 +179,37 @@ def _normalize_resume_state(resume_state: Dict[str, Any], trainable: Sequence[in
     reason = "normal"
     new_conc = conc_prev
     if conc_prev < min_ref or conc_prev > max_ref:
-        new_conc = max_ref
-        reason = "reset"
+        new_conc = max(min_ref, min(max_ref, conc_prev))
+        reason = "checkpoint_inconsistent"
 
-    new_step = max(0, step_prev)
-    if reason == "normal":
-        expected = trainable.index(new_conc) + 1 if new_conc in trainable else 0
-        if expected > 0 and abs(new_step - expected) > max(200, expected // 2):
-            new_step = expected
-            reason = "rebase"
-    else:
-        new_step = trainable.index(new_conc) + 1 if new_conc in trainable else 0
+    expected = trainable.index(new_conc) + 1 if new_conc in trainable else 0
+    new_step = max(int(done), 0, step_prev, expected)
+    max_reasonable = max(len(trainable) + 500, expected + 500)
+    if step_prev > max_reasonable:
+        new_step = max(int(done), expected)
+        reason = "checkpoint_inconsistent"
+    elif step_prev < expected:
+        new_step = max(int(done), expected)
+        if reason == "normal":
+            reason = "repair"
+
+    if schema_version < CHECKPOINT_SCHEMA_VERSION and new_step != step_prev:
+        reason = "rebase"
+    elif reason == "normal" and new_step != step_prev:
+        reason = "repair"
 
     out["concurso_ref"] = int(new_conc)
     out["step_global"] = int(new_step)
     out["step"] = int(new_step)
     return out, reason, step_prev, conc_prev
+
+
+def _is_irrecoverable_db_error(exc: Exception) -> bool:
+    if isinstance(exc, sqlite3.DatabaseError) and not isinstance(exc, sqlite3.OperationalError):
+        return True
+    msg = str(exc).lower()
+    fatal_markers = ("malformed", "disk image is malformed", "not a database", "database is locked forever")
+    return any(m in msg for m in fatal_markers)
 def _current_brain_mask(hub: BrainHub) -> List[str]:
     out: List[str] = []
     for b in getattr(hub, "brains", []):
@@ -1505,8 +1526,10 @@ def main() -> None:
                 pos = (trainable.index(restored_ref) + 1) % max(1, len(trainable))
             _restore_brain_mask(hub, resume_state.get("policy", {}).get("brain_mask", []))
             learning_snapshot = dict(resume_state.get("learning_snapshot", learning_snapshot))
-            if resume_reason != "normal":
+            if resume_reason == "rebase":
                 log(f"⚠️ resume_rebased reason={resume_reason} step={prev_step}->{done} concurso_ref={prev_ref}->{restored_ref}")
+            elif resume_reason != "normal":
+                log(f"🛠️ resume_repair reason={resume_reason} step={prev_step}->{done} concurso_ref={prev_ref}->{restored_ref}")
             log(f"♻️ Auto-resume aplicado: step_global {prev_step}->{done} | concurso_ref {prev_ref}->{restored_ref} | motivo={resume_reason}")
 
         while True:
@@ -1781,8 +1804,29 @@ def main() -> None:
                     runtime_cfg=learning_monitor_cfg,
                 )
             except Exception as step_exc:
-                log(f"❌ step_error trace_id={trace_id} phase=run_step detail={step_exc}")
+                err_type = type(step_exc).__name__
+                log(f"❌ step_error trace_id={trace_id} phase=run_step type={err_type} detail={step_exc}")
+                log(traceback.format_exc())
+                if bool(checkpoint_cfg.get("enabled", False)) and meta_run_id is not None:
+                    try:
+                        checkpoint_manager.save(
+                            {
+                                "run_id": int(meta_run_id),
+                                "run_name": str(args.run_name),
+                                "step": int(done),
+                                "step_global": int(done),
+                                "concurso_ref": int(concurso_n),
+                                "timestamp": now_str(),
+                                "schema_version": int(CHECKPOINT_SCHEMA_VERSION),
+                                "reason": "step_error_last_consistent",
+                            }
+                        )
+                    except Exception as ck_exc:
+                        log(f"⚠️ fail_safe checkpoint save falhou trace_id={trace_id} detail={ck_exc}")
+                if _is_irrecoverable_db_error(step_exc):
+                    raise
                 time.sleep(min(5.0, max(0.5, float(checkpoint_cfg.get('error_backoff_seconds', 1.5)))))
+                configure_weighted_sampling_runtime()
                 continue
             step_timer.mark("generate_candidates")
             progress.set_phase("evaluate_hits", detail="score_hits")
@@ -2052,6 +2096,7 @@ def main() -> None:
                     "step_global": int(done),
                     "concurso_ref": int(concurso_n),
                     "timestamp": now_str(),
+                    "schema_version": int(CHECKPOINT_SCHEMA_VERSION),
                     "code_version": _git_short_hash(),
                     "rng_seed_base": int(seed),
                     "rng_state_py": _encode_obj(random.getstate()),

@@ -36,6 +36,15 @@ class CheckpointManager:
             CREATE INDEX IF NOT EXISTS idx_checkpoints_run_step ON checkpoints(run_id, step);
             """
         )
+        for ddl in (
+            "ALTER TABLE checkpoints ADD COLUMN step_global INTEGER",
+            "ALTER TABLE checkpoints ADD COLUMN timestamp TEXT",
+            "ALTER TABLE checkpoints ADD COLUMN schema_version INTEGER",
+        ):
+            try:
+                self.conn.execute(ddl)
+            except sqlite3.OperationalError:
+                pass
         self.conn.commit()
 
     def _prune(self, run_id: int) -> None:
@@ -55,15 +64,18 @@ class CheckpointManager:
         state_hash = compute_hash(state_json)
         run_id = int(state.get("run_id", 0))
         step = int(state.get("step", 0))
+        step_global = int(state.get("step_global", step))
         concurso_ref = int(state.get("concurso_ref", 0))
+        ts = str(state.get("timestamp", now_str()))
+        schema_version = int(state.get("schema_version", 1))
         try:
             self.conn.execute("BEGIN")
             self.conn.execute(
                 """
-                INSERT INTO checkpoints(run_id, step, concurso_ref, created_at, state_json, state_hash, is_valid)
-                VALUES (?, ?, ?, ?, ?, ?, 1)
+                INSERT INTO checkpoints(run_id, step, step_global, concurso_ref, created_at, timestamp, schema_version, state_json, state_hash, is_valid)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
                 """,
-                (run_id, step, concurso_ref, now_str(), state_json, state_hash),
+                (run_id, step, step_global, concurso_ref, now_str(), ts, schema_version, state_json, state_hash),
             )
             self._prune(run_id)
             self.conn.commit()
