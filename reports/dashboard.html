@@ -1,0 +1,96 @@
+
+    <!DOCTYPE html>
+    <html lang="pt-BR">
+      <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>IA Trevo4Folhas — Relatório</title>
+        <style>
+          :root {
+            color-scheme: dark;
+            --bg: #0b0f1a;
+            --card: #141a2a;
+            --muted: #94a3b8;
+            --accent: #22c55e;
+            --border: #1f2a44;
+          }
+          * {
+            box-sizing: border-box;
+            font-family: "Inter", "Segoe UI", sans-serif;
+          }
+          body {
+            margin: 0;
+            background: var(--bg);
+            color: #e2e8f0;
+          }
+          header {
+            padding: 24px 32px;
+            border-bottom: 1px solid var(--border);
+            background: linear-gradient(120deg, #0b1224 0%, #111a33 100%);
+          }
+          main {
+            padding: 24px 32px 48px;
+            display: grid;
+            gap: 24px;
+          }
+          .grid {
+            display: grid;
+            gap: 20px;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+          }
+          .card {
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            padding: 18px;
+          }
+          .metrics {
+            display: grid;
+            gap: 12px;
+          }
+          .metric {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 8px 12px;
+            border-radius: 10px;
+            background: rgba(15, 23, 42, 0.7);
+          }
+          .metric span {
+            color: var(--muted);
+          }
+          .list {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+          }
+          .list li {
+            padding: 6px 0;
+            border-bottom: 1px solid rgba(148, 163, 184, 0.15);
+            font-size: 13px;
+            color: var(--muted);
+          }
+          .muted {
+            color: var(--muted);
+            font-size: 12px;
+          }
+        </style>
+      </head>
+      <body>
+        <header>
+          <h1>IA Trevo4Folhas — Relatório Executivo</h1>
+          <p class="muted">Gerado em 2026-02-14 16:00:42</p>
+        </header>
+        <main>
+          <section class="grid">
+            <div class='card'><h3>Relatório 15 dezenas</h3><p class='muted'>Sem relatório disponível.</p></div>
+            <div class='card'><h3>Relatório 18 dezenas</h3><p class='muted'>Sem relatório disponível.</p></div>
+          </section>
+          <section class="grid">
+            <div class='card'><h3>Top cérebros (15 dezenas)</h3><p class='muted'>Sem dados de cérebros.</p></div>
+            <div class='card'><h3>Top cérebros (18 dezenas)</h3><p class='muted'>Sem dados de cérebros.</p></div>
+          </section>
+        </main>
+      </body>
+    </html>
+    

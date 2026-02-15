@@ -4,7 +4,7 @@
     "hit_max": 1.0,
     "distribution": 0.2,
     "diversity": 0.35,
-    "stagnation": 0.8,
+    "stagnation": 0.6700000000000002,
     "improve_bonus": 0.15
   },
   "hit_scores": {

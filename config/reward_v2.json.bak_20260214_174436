@@ -2,9 +2,9 @@
   "enabled": true,
   "weights": {
     "hit_max": 1.0,
-    "distribution": 0.2,
+    "distribution": 0.20,
     "diversity": 0.35,
-    "stagnation": 0.8,
+    "stagnation": 0.55,
     "improve_bonus": 0.15
   },
   "hit_scores": {
@@ -12,7 +12,7 @@
     "14": 1.6,
     "13": 0.35,
     "12": 0.15,
-    "11_or_less": -0.1
+    "11_or_less": -0.10
   },
   "distribution_bonus": {
     "13_each": 0.02,

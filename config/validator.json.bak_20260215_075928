@@ -3,7 +3,7 @@
   "train_window": 120,
   "valid_window": 120,
   "gap": 0,
-  "sample_concursos": 34,
+  "sample_concursos": 26,
   "promote_margin_score": 0.08,
   "promote_margin_hit": 0.0,
   "require_both_baselines": true,

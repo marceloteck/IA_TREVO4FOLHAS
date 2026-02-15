@@ -1,10 +1,9 @@
 {
   "enabled": true,
-  "confidence_threshold": 0.48,
+  "confidence_threshold": 0.52,
   "hidden_units": 32,
   "learning_rate": 0.001,
   "batch_size": 32,
   "train_every_steps": 10,
-  "fallback_enabled": true,
-  "mlp_batch_log_cooldown_s": 30
+  "fallback_enabled": true
 }
