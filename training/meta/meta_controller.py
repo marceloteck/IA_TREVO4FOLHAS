@@ -54,6 +54,11 @@ class MetaController:
     def _apply_effective_batch_size(self, sample_count: int) -> None:
         configured_batch_size = int(self.config.get("batch_size", 32))
         effective_batch_size = max(1, min(configured_batch_size, int(sample_count)))
+        if effective_batch_size != configured_batch_size:
+            print(
+                f"mlp: batch_size ajustado {configured_batch_size}->{effective_batch_size} (n={int(sample_count)})",
+                flush=True,
+            )
         self.arm_model.batch_size = effective_batch_size
         self.recipe_model.batch_size = effective_batch_size
         self.explore_model.batch_size = effective_batch_size

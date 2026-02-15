@@ -32,6 +32,8 @@ class GovernanceDecision:
     max_clone_jaccard: float
     actions: List[str]
     reason: str
+    confidence_raw: float = 0.5
+    confidence_smooth: float = 0.5
 
 
 class GovernanceManager:
@@ -53,6 +55,10 @@ class GovernanceManager:
             "freeze_active_until_step": 0,
             # compatibilidade com código legado do backtest
             "autotuning_frozen_until_step": 0,
+            "conf_smooth": None,
+            "last_policy": "NORMAL",
+            "delta14_ema": None,
+            "reward_ema": None,
         }
 
     def get_state(self) -> Dict[str, Any]:
@@ -73,6 +79,10 @@ class GovernanceManager:
                 "last_freeze_step": int(state.get("last_freeze_step", self.history["last_freeze_step"])),
                 "freeze_active_until_step": int(state.get("freeze_active_until_step", self.history["freeze_active_until_step"])),
                 "autotuning_frozen_until_step": int(state.get("autotuning_frozen_until_step", self.history["autotuning_frozen_until_step"])),
+                "conf_smooth": float(state.get("conf_smooth", self.history.get("conf_smooth", 0.5) or 0.5)),
+                "last_policy": str(state.get("last_policy", self.history.get("last_policy", "NORMAL"))),
+                "delta14_ema": float(state.get("delta14_ema", self.history.get("delta14_ema", 0.0) or 0.0)),
+                "reward_ema": float(state.get("reward_ema", self.history.get("reward_ema", 0.0) or 0.0)),
             }
         )
 
@@ -116,10 +126,33 @@ class GovernanceManager:
         else:
             self.history["delta14_red_streak"] = 0
 
-    def is_low_conf(self, inputs: GovernanceInputs, cfg: Dict[str, Any]) -> bool:
-        if inputs.confidence_score is None:
-            return False
-        return float(inputs.confidence_score) < float(cfg.get("confidence_red", 0.45))
+    def _smooth_confidence(self, conf_raw: float, rules: Dict[str, Any]) -> float:
+        alpha = min(1.0, max(0.01, float(rules.get("conf_ema_alpha", rules.get("gov_ema_alpha", 0.20)))))
+        prev = self.history.get("conf_smooth")
+        if prev is None:
+            smooth = float(conf_raw)
+        else:
+            smooth = alpha * float(conf_raw) + (1.0 - alpha) * float(prev)
+        self.history["conf_smooth"] = float(smooth)
+        return float(smooth)
+
+    def _update_metric_emas(self, inputs: GovernanceInputs, rules: Dict[str, Any]) -> None:
+        alpha = min(1.0, max(0.01, float(rules.get("gov_ema_alpha", rules.get("conf_ema_alpha", 0.20)))))
+        d_prev = self.history.get("delta14_ema")
+        r_prev = self.history.get("reward_ema")
+        self.history["delta14_ema"] = float(inputs.delta14) if d_prev is None else float(alpha * float(inputs.delta14) + (1.0 - alpha) * float(d_prev))
+        self.history["reward_ema"] = float(inputs.reward_avg) if r_prev is None else float(alpha * float(inputs.reward_avg) + (1.0 - alpha) * float(r_prev))
+
+    def is_low_conf(self, conf_smooth: float, cfg: Dict[str, Any]) -> bool:
+        enter = float(cfg.get("gov_low_enter", cfg.get("conf_enter_safe", cfg.get("confidence_red", 0.45))))
+        exit_ = float(cfg.get("gov_low_exit", cfg.get("conf_exit_safe", max(enter + 0.05, cfg.get("confidence_green", 0.65)))))
+        if exit_ <= enter:
+            exit_ = enter + 0.05
+
+        prev_policy = str(self.history.get("last_policy", "NORMAL")).upper()
+        if prev_policy == "SAFE":
+            return float(conf_smooth) <= exit_
+        return float(conf_smooth) < enter
 
     def is_true_red(self, inputs: GovernanceInputs, cfg: Dict[str, Any], history: Dict[str, Any]) -> bool:
         status = self._status_norm(inputs.status)
@@ -173,12 +206,15 @@ class GovernanceManager:
         self._update_streaks(status=status, inputs=inputs, rules=rules)
         self.history["last_eval_step"] = int(inputs.step)
 
-        conf = 0.5 if inputs.confidence_score is None else float(inputs.confidence_score)
+        conf_raw = 0.5 if inputs.confidence_score is None else float(inputs.confidence_score)
+        conf_smooth = self._smooth_confidence(conf_raw, rules)
+        self._update_metric_emas(inputs, rules)
         actions: List[str] = []
         reason = ""
 
         is_true_red_now = self.is_true_red(inputs=inputs, cfg=rules, history=self.history)
-        is_low_conf_now = self.is_low_conf(inputs=inputs, cfg=rules)
+        low_conf_enabled = bool(rules.get("low_conf_defensive_enabled", True))
+        is_low_conf_now = low_conf_enabled and self.is_low_conf(conf_smooth=conf_smooth, cfg=rules)
 
         if status == "WARMUP":
             policy = warmup_policy
@@ -198,7 +234,7 @@ class GovernanceManager:
             reason = "low_conf_defensive"
         elif (
             status == "GREEN"
-            and conf >= float(rules.get("confidence_green", 0.65))
+            and conf_smooth >= float(rules.get("confidence_green", 0.65))
             and float(inputs.delta14) >= float(rules.get("delta14_green", 0.03))
             and int(self.history.get("green_streak", 0)) >= int(rules.get("green_min_consecutive_updates", 3))
         ):
@@ -226,6 +262,8 @@ class GovernanceManager:
             policy = "NORMAL" if "NORMAL" in policies else next(iter(policies.keys()), "SAFE")
 
         p = dict(policies.get(policy, {}))
+        self.history["last_policy"] = str(policy)
+
         return GovernanceDecision(
             policy_name=str(policy),
             max_games_mult=float(p.get("max_games_mult", 1.0)),
@@ -235,6 +273,8 @@ class GovernanceManager:
             max_clone_jaccard=float(p.get("max_clone_jaccard", 0.75)),
             actions=actions,
             reason=str(reason),
+            confidence_raw=float(conf_raw),
+            confidence_smooth=float(conf_smooth),
         )
 
     def apply_policy_to_generation(self, decision: GovernanceDecision, gen_params: Dict[str, Any]) -> Dict[str, Any]:
@@ -254,7 +294,9 @@ class GovernanceManager:
         anti = dict(self.cfg.get("anti_self_deception", {}))
         freeze_on_true_red = bool(anti.get("freeze_autotuning_on_true_red", anti.get("freeze_autotuning_on_red", True)))
         if freeze_on_true_red and "TRUE_RED_SAFE" in list(decision.actions):
-            freeze_steps = int(anti.get("freeze_autotuning_steps", 500))
+            conf = float(getattr(decision, "confidence_smooth", 0.5))
+            freeze_steps = int(max(50, min(300, int(200 * max(0.0, 0.52 - conf)))))
+            freeze_steps = max(freeze_steps, int(min(anti.get("freeze_autotuning_steps", 500), 300)))
             current_step = int(self.history.get("last_eval_step", 0))
             if self.maybe_freeze(self.history, anti, current_step):
                 cb = system_handles.get("freeze_autotuning") if isinstance(system_handles, dict) else None

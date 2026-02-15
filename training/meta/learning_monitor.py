@@ -5,6 +5,8 @@ from dataclasses import dataclass
 import sqlite3
 from typing import Any, Deque, Dict, List
 
+from training.monitoring.baseline import compute_baseline_from_db
+
 
 STATUS_WARMUP = "warmup"
 STATUS_LEARNING = "learning"
@@ -91,58 +93,29 @@ class LearningMonitor:
         if db is None:
             return None
         min_samples = max(20, int(self.cfg.get("min_amostras_baseline_db", 60)))
-        try:
-            rows = db.execute(
-                """
-                SELECT concurso, d1,d2,d3,d4,d5,d6,d7,d8,d9,d10,d11,d12,d13,d14,d15
-                FROM concursos
-                ORDER BY concurso DESC
-                LIMIT ?
-                """,
-                (int(janela) + 1,),
-            ).fetchall()
-        except Exception:
-            return None
+        max_samples = max(min_samples + 1, int(self.cfg.get("max_amostras_baseline_db", 5000)))
+        baseline_window = max(5, int(self.cfg.get("baseline_window_W", janela or self.main_window)))
+        baseline = compute_baseline_from_db(
+            db_path=db,
+            n_min=min_samples,
+            n_max=max_samples,
+            window=baseline_window,
+        )
 
-        if not rows:
-            return None
-        rows = list(reversed(rows))
-        if len(rows) < min_samples + 1:
-            return None
-
-        q14_freq = 0
-        q14_copy = 0
-        evaluated = 0
-        for idx in range(1, len(rows)):
-            hist = rows[max(0, idx - int(janela)) : idx]
-            if not hist:
-                continue
-            freq = Counter()
-            for r in hist:
-                for d in r[1:]:
-                    if d is not None:
-                        freq[int(d)] += 1
-            pred_freq = set(d for d, _ in sorted(freq.items(), key=lambda x: (-x[1], x[0]))[:15])
-            if len(pred_freq) != 15:
-                continue
-
-            pred_copy = {int(d) for d in hist[-1][1:] if d is not None}
-            result = {int(d) for d in rows[idx][1:] if d is not None}
-            if len(result) != 15 or len(pred_copy) != 15:
-                continue
-
-            if len(pred_freq & result) >= 14:
-                q14_freq += 1
-            if len(pred_copy & result) >= 14:
-                q14_copy += 1
-            evaluated += 1
-
+        evaluated = int(baseline.get("num_outcomes", 0))
         if evaluated < min_samples:
-            return None
+            return {
+                "frequencia_recente_q14_rate": 0.0,
+                "copiar_ultimo_q14_rate": 0.0,
+                "num_outcomes": evaluated,
+                "source": "db_insufficient",
+            }
 
         return {
-            "frequencia_recente_q14_rate": float(q14_freq) / float(evaluated),
-            "copiar_ultimo_q14_rate": float(q14_copy) / float(evaluated),
+            "frequencia_recente_q14_rate": _clamp(float(baseline.get("frequencia_recente_q14_rate", 0.0)), 0.0, 1.0),
+            "copiar_ultimo_q14_rate": _clamp(float(baseline.get("copiar_ultimo_q14_rate", 0.0)), 0.0, 1.0),
+            "num_outcomes": int(evaluated),
+            "source": str(baseline.get("source", "db")),
         }
 
     def _resolve_baseline(self) -> Dict[str, float]:
@@ -151,7 +124,7 @@ class LearningMonitor:
         baseline_fixed_ref = max(fixed_freq, fixed_copy)
 
         real = self.calcular_baseline_real(self.db_conn, self.main_window)
-        if real is None:
+        if real is None or int(real.get("num_outcomes", 0)) <= 0:
             self._baseline_real_cache = None
             self._baseline_real_source = "fixed"
             return {
@@ -167,6 +140,8 @@ class LearningMonitor:
         real_freq = float(real.get("frequencia_recente_q14_rate", 0.0))
         real_copy = float(real.get("copiar_ultimo_q14_rate", 0.0))
         real_ref = max(real_freq, real_copy)
+        real_count = int(real.get("num_outcomes", 0))
+        real_source_raw = str(real.get("source", "db"))
         if self.baseline_mode == "hard":
             ref = real_ref
             source = "db_hard"
@@ -183,6 +158,8 @@ class LearningMonitor:
             "fixed_ref_q14_rate": float(baseline_fixed_ref),
             "real_ref_q14_rate": float(real_ref),
             "source": source,
+            "real_num_outcomes": int(real_count),
+            "real_source_raw": real_source_raw,
         }
 
     def _compute(self) -> Dict[str, Any]:
@@ -193,6 +170,12 @@ class LearningMonitor:
         baseline = self._resolve_baseline()
         baseline_ref = float(baseline.get("ref_q14_rate", max(self.baseline_freq_recent, self.baseline_copy_last)))
         baseline_source = str(baseline.get("source", "fixed"))
+        if baseline_source == "fixed" and str(baseline.get("real_source_raw", "")).startswith("db_insufficient") and not self._baseline_announced:
+            events.append(
+                f"ℹ️ baseline_db: poucos dados ({int(baseline.get('real_num_outcomes', 0))}), usando baseline_fixo do JSON"
+            )
+            self._baseline_announced = True
+
         if baseline_source.startswith("db_") and not self._baseline_announced:
             events.append(
                 "📊 Baseline real calculado via DB: "

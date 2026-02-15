@@ -34,7 +34,14 @@
     "structural_stagnation_forces_safe": true,
     "true_red_requires_status_red": true,
     "true_red_reward_threshold": -0.3,
-    "true_red_reward_requires_consecutive": 3
+    "true_red_reward_requires_consecutive": 3,
+    "conf_enter_safe": 0.45,
+    "conf_exit_safe": 0.52,
+    "conf_ema_alpha": 0.2,
+    "low_conf_defensive_enabled": true,
+    "gov_ema_alpha": 0.15,
+    "gov_low_enter": 0.45,
+    "gov_low_exit": 0.52
   },
   "anti_self_deception": {
     "freeze_autotuning_on_red": true,

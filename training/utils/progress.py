@@ -17,17 +17,33 @@ def file_ts() -> str:
 
 
 class ProgressPrinter:
-    def __init__(self, progress_every_steps: int = 10, heartbeat_seconds: int = 15, profile_steps: bool = False, stream: Any = sys.stdout):
+    def __init__(
+        self,
+        progress_every_steps: int = 10,
+        heartbeat_seconds: int = 15,
+        profile_steps: bool = False,
+        stream: Any = sys.stdout,
+        progress_log_every_s: float = 15.0,
+        watchdog_dump_cooldown_s: float = 300.0,
+    ):
         self.progress_every_steps = max(1, int(progress_every_steps))
         self.heartbeat_seconds = max(1, int(heartbeat_seconds))
         self.profile_steps = bool(profile_steps)
         self.stream = stream
         self.lock = threading.Lock()
-        self.last_log_time = time.time()
+        now = time.time()
+        self.last_log_time = now
+        self.last_heartbeat_time = 0.0
+        self.last_heartbeat_log_time = 0.0
+        self.progress_log_every_s = max(1.0, float(progress_log_every_s))
+        self.watchdog_dump_cooldown_s = max(5.0, float(watchdog_dump_cooldown_s))
+        self._last_dump_ts = 0.0
+        self.heartbeat_snapshot: Dict[str, Any] = {}
         self.state: Dict[str, Any] = {
             "step": None,
             "concurso": None,
             "phase": "idle",
+            "detail": None,
             "mode": None,
             "regime": None,
             "arm": None,
@@ -40,11 +56,58 @@ class ProgressPrinter:
                 if key in self.state and value is not None:
                     self.state[key] = value
 
+    def set_phase(self, phase: str, detail: str | None = None) -> None:
+        payload: Dict[str, Any] = {"phase": str(phase)}
+        if detail is not None:
+            payload["detail"] = str(detail)
+        self.set_state(**payload)
+
+    def set_progress_log_every(self, seconds: float) -> None:
+        with self.lock:
+            self.progress_log_every_s = max(1.0, float(seconds))
+
+    def set_watchdog_dump_cooldown(self, seconds: float) -> None:
+        with self.lock:
+            self.watchdog_dump_cooldown_s = max(5.0, float(seconds))
+
     def log(self, msg: str, update_last_log: bool = True) -> None:
         with self.lock:
             print(f"{now_ts()} {msg}", file=self.stream, flush=True)
             if update_last_log:
                 self.last_log_time = time.time()
+
+    def touch_activity(self, payload: Dict[str, Any] | None = None) -> None:
+        with self.lock:
+            now = time.time()
+            self.last_heartbeat_time = now
+            if isinstance(payload, dict) and payload:
+                self.heartbeat_snapshot = dict(payload)
+
+    def heartbeat(self, payload: Dict[str, Any] | None = None, log_every_s: float | None = None) -> None:
+        data = dict(payload or {})
+        self.touch_activity(data)
+
+        phase = str(data.get("phase", "") or "")
+        if phase:
+            self.set_phase(phase, detail=str(data.get("subphase") or data.get("detail") or "") or None)
+        elif (data.get("subphase") or data.get("detail")) and str(self.state.get("phase")):
+            self.set_phase(str(self.state.get("phase")), detail=str(data.get("subphase") or data.get("detail")))
+
+        every = max(1.0, float(log_every_s) if log_every_s is not None else float(self.progress_log_every_s))
+        should_log = False
+        with self.lock:
+            now = time.time()
+            if (now - float(self.last_heartbeat_log_time)) >= every:
+                self.last_heartbeat_log_time = now
+                should_log = True
+        if should_log:
+            sub = str(data.get("subphase") or data.get("detail") or self.state.get("detail") or "-")
+            i = int(data.get("i", 0))
+            n = int(data.get("n", 0))
+            elapsed = float(data.get("elapsed", 0.0))
+            rate = float(data.get("rate", 0.0))
+            extra_rate = f" rate={rate:.1f}/s" if rate > 0 else ""
+            self.log(f"💓 activity phase={self.state.get('phase')} detail={sub} i={i}/{n} elapsed={elapsed:.1f}s{extra_rate}")
 
     def log_step(self, data: Dict[str, Any]) -> None:
         msg = " | ".join(
@@ -127,13 +190,36 @@ class Heartbeat(threading.Thread):
             with self.printer.lock:
                 state = dict(self.printer.state)
                 since_last = now - self.printer.last_log_time
+                since_heartbeat = (now - self.printer.last_heartbeat_time) if self.printer.last_heartbeat_time > 0 else float("inf")
+                hb_data = dict(self.printer.heartbeat_snapshot)
+            detail = state.get("detail") or "-"
             self.printer.log(
                 f"⏳ rodando... step={state.get('step')} N={state.get('concurso')} "
-                f"phase={state.get('phase')} mode={state.get('mode')} since_last_log={since_last:.1f}s",
+                f"phase={state.get('phase')} detail={detail} mode={state.get('mode')} since_last_log={since_last:.1f}s",
                 update_last_log=False,
             )
+            heavy_phase = str(state.get("phase", "")) in {"evaluate_hits", "features", "generate_candidates"}
             if since_last >= float(self.freeze_warn_seconds):
-                self.printer.log("⚠️ watchdog: sem logs recentes; dump leve da stack principal")
+                if heavy_phase and since_heartbeat <= float(self.freeze_warn_seconds):
+                    self.printer.log(
+                        "ℹ️ watchdog: ok (heartbeat ativo) "
+                        f"subphase={hb_data.get('subphase', hb_data.get('detail', '-'))} "
+                        f"elapsed={float(hb_data.get('elapsed', 0.0)):.1f}s"
+                    )
+                    continue
+                now_dump = time.time()
+                with self.printer.lock:
+                    cooldown = float(self.printer.watchdog_dump_cooldown_s)
+                    can_dump = (now_dump - float(self.printer._last_dump_ts)) >= cooldown
+                    if can_dump:
+                        self.printer._last_dump_ts = now_dump
+                if not can_dump:
+                    self.printer.log("ℹ️ watchdog: cooldown ativo; dump já emitido recentemente")
+                    continue
+                self.printer.log(
+                    "⚠️ watchdog: sem logs recentes (pode ser etapa longa, não necessariamente erro); "
+                    "dump leve da stack principal"
+                )
                 try:
                     faulthandler.dump_traceback(file=sys.stdout)
                 except Exception:
