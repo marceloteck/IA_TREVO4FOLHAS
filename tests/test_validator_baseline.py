@@ -1,4 +1,5 @@
 import sqlite3
+import time
 
 from training.meta.promotion import PromotionManager
 from training.validation.baseline_models import BaselineGenerator
@@ -63,5 +64,59 @@ def test_validator_baseline_and_promotion_gate():
             assert decision in {"promote", "keep_testing"}
         else:
             assert decision in {"park", "keep_testing"}
+    finally:
+        conn.close()
+
+
+def test_validator_timeout_degrade_limits_validated_count():
+    conn = sqlite3.connect(":memory:")
+    try:
+        _mk_db(conn)
+        bcfg = {"enabled": True, "variants": ["global", "recent_120"], "max_games": 20}
+        vcfg = {
+            "enabled": True,
+            "train_window": 120,
+            "valid_window": 120,
+            "gap": 0,
+            "sample_concursos": 20,
+            "validate_soft_timeout_s": 0.1,
+            "validate_degrade_ref_fraction": 0.25,
+            "validate_min_refs_after_timeout": 4,
+        }
+        validator = StrategyValidator(conn, vcfg, bcfg)
+
+        def slow_candidate(concurso_ref: int, tipo_jogo: int, max_games: int, context: dict):
+            time.sleep(0.05)
+            return [list(range(1, 16)) for _ in range(min(5, max_games))]
+
+        report = validator.validate_candidate(slow_candidate, 320, 15, 30, {})
+        assert report.get("degraded") is True
+        assert report.get("timeout_action") == "degrade_max_games_and_limit_refs"
+        assert int(report.get("validated_count", 0)) <= 8
+    finally:
+        conn.close()
+
+
+def test_validator_short_circuit_invalid_candidate_games():
+    conn = sqlite3.connect(":memory:")
+    try:
+        _mk_db(conn)
+        bcfg = {"enabled": True, "variants": ["global", "recent_120"], "max_games": 20}
+        vcfg = {
+            "enabled": True,
+            "train_window": 120,
+            "valid_window": 120,
+            "gap": 0,
+            "sample_concursos": 8,
+            "validate_soft_timeout_s": 2.0,
+        }
+        validator = StrategyValidator(conn, vcfg, bcfg)
+
+        def invalid_candidate(concurso_ref: int, tipo_jogo: int, max_games: int, context: dict):
+            return [[1, 1, 2], [30] * 15]
+
+        report = validator.validate_candidate(invalid_candidate, 320, 15, 30, {})
+        assert "passes_validation" in report
+        assert report["candidate_hit_max_mean"] == 0.0
     finally:
         conn.close()

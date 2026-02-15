@@ -88,3 +88,19 @@ def test_checkpoint_marks_corrupted_as_invalid_and_loads_previous():
         assert int(bad[0]) == 0
     finally:
         conn.close()
+
+
+def test_checkpoint_schema_migration_adds_columns():
+    conn = sqlite3.connect(":memory:")
+    try:
+        conn.execute("CREATE TABLE runs (id INTEGER PRIMARY KEY, status TEXT)")
+        conn.execute("INSERT INTO runs(id, status) VALUES (1, 'running')")
+        ck = CheckpointManager(conn, {"enabled": True})
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(checkpoints)").fetchall()}
+        assert {"step_global", "timestamp", "schema_version"}.issubset(cols)
+
+        ck.save({"run_id": 1, "step": 3, "step_global": 7, "concurso_ref": 11, "schema_version": 2, "timestamp": "t"})
+        row = conn.execute("SELECT step, step_global, concurso_ref, schema_version, timestamp FROM checkpoints ORDER BY id DESC LIMIT 1").fetchone()
+        assert row == (3, 7, 11, 2, "t")
+    finally:
+        conn.close()
