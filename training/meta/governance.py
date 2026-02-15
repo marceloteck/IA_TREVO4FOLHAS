@@ -144,15 +144,16 @@ class GovernanceManager:
         self.history["reward_ema"] = float(inputs.reward_avg) if r_prev is None else float(alpha * float(inputs.reward_avg) + (1.0 - alpha) * float(r_prev))
 
     def is_low_conf(self, conf_smooth: float, cfg: Dict[str, Any]) -> bool:
-        enter = float(cfg.get("gov_low_enter", cfg.get("conf_enter_safe", cfg.get("confidence_red", 0.45))))
+        enter = float(cfg.get("gov_low_enter", cfg.get("conf_enter_safe", cfg.get("confidence_red", 0.44))))
         exit_ = float(cfg.get("gov_low_exit", cfg.get("conf_exit_safe", max(enter + 0.05, cfg.get("confidence_green", 0.65)))))
         if exit_ <= enter:
             exit_ = enter + 0.05
 
         prev_policy = str(self.history.get("last_policy", "NORMAL")).upper()
         if prev_policy == "SAFE":
-            return float(conf_smooth) <= exit_
-        return float(conf_smooth) < enter
+            # histerese: quando já está em SAFE, só deixa de ser low_conf ao atingir o limite de saída
+            return float(conf_smooth) < exit_
+        return float(conf_smooth) <= enter
 
     def is_true_red(self, inputs: GovernanceInputs, cfg: Dict[str, Any], history: Dict[str, Any]) -> bool:
         status = self._status_norm(inputs.status)
@@ -212,6 +213,10 @@ class GovernanceManager:
         actions: List[str] = []
         reason = ""
 
+        low_enter = float(rules.get("gov_low_enter", rules.get("conf_enter_safe", rules.get("confidence_red", 0.44))))
+        low_exit = float(rules.get("gov_low_exit", rules.get("conf_exit_safe", max(low_enter + 0.05, rules.get("confidence_green", 0.65)))))
+        prev_policy = str(self.history.get("last_policy", "NORMAL")).upper()
+
         is_true_red_now = self.is_true_red(inputs=inputs, cfg=rules, history=self.history)
         low_conf_enabled = bool(rules.get("low_conf_defensive_enabled", True))
         is_low_conf_now = low_conf_enabled and self.is_low_conf(conf_smooth=conf_smooth, cfg=rules)
@@ -231,7 +236,11 @@ class GovernanceManager:
         elif is_low_conf_now:
             policy = "SAFE"
             actions = ["LOW_CONF_DEFENSIVE"]
-            reason = "low_conf_defensive"
+            reason = "ema_low_enter"
+        elif prev_policy == "SAFE" and conf_smooth >= low_exit:
+            policy = "NORMAL"
+            actions = ["EMA_RECOVERED"]
+            reason = "ema_recovered"
         elif (
             status == "GREEN"
             and conf_smooth >= float(rules.get("confidence_green", 0.65))

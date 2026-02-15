@@ -1673,9 +1673,14 @@ def main() -> None:
             )
             if (
                 str(governance_snapshot.get("policy", "")).upper() == "SAFE"
-                and str(governance_snapshot.get("reason", "")) == "low_conf_defensive"
+                and str(governance_snapshot.get("reason", "")) == "ema_low_enter"
             ):
-                log("GOV:SAFE (low_conf)")
+                log("GOV:SAFE (ema_low_enter)")
+            if (
+                str(governance_snapshot.get("policy", "")).upper() == "NORMAL"
+                and str(governance_snapshot.get("reason", "")) == "ema_recovered"
+            ):
+                log("GOV:NORMAL (ema_recovered)")
 
             progress.set_state(mode=mode, regime=regime, arm=arm.name, recipe=recipe.name)
             progress.set_phase("generate_candidates", detail="core_protect_build")
@@ -1901,7 +1906,7 @@ def main() -> None:
                     concurso_ref=int(concurso_n),
                     tipo_jogo=15,
                     max_games=min(int(baseline_cfg.get("max_games", 60)), 60),
-                    context={"arm": arm.name, "recipe": recipe.name, "mode": mode},
+                    context={"arm": arm.name, "recipe": recipe.name, "mode": mode, "heartbeat": progress.heartbeat},
                 )
 
                 if bool(reporting_cfg.get("enabled", True)) and meta_run_id is not None:

@@ -40,7 +40,7 @@
     "conf_ema_alpha": 0.2,
     "low_conf_defensive_enabled": true,
     "gov_ema_alpha": 0.15,
-    "gov_low_enter": 0.45,
+    "gov_low_enter": 0.44,
     "gov_low_exit": 0.52
   },
   "anti_self_deception": {

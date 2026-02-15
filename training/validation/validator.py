@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import random
 import sqlite3
+import time
 from pathlib import Path
 
 from training.validation.baseline_models import BaselineGenerator
@@ -59,24 +60,74 @@ class StrategyValidator:
         cand_hit = []
         base_hit = []
 
-        for ref in refs:
+        heartbeat_cb = context.get("heartbeat") if isinstance(context, dict) else None
+        heartbeat_every = max(1, int(self.cfg.get("validate_heartbeat_every", 50)))
+        heartbeat_seconds = max(0.2, float(self.cfg.get("validate_heartbeat_seconds", 2.0)))
+        soft_timeout_s = max(1.0, float(self.cfg.get("validate_soft_timeout_s", 60.0)))
+        degrade_fraction = min(1.0, max(0.1, float(self.cfg.get("validate_degrade_fraction", 0.5))))
+        validate_min_candidates = max(1, int(self.cfg.get("validate_min_candidates", 50)))
+
+        t0 = time.perf_counter()
+        last_heartbeat_ts = t0
+        last_ok = 0
+        last_fail = 0
+        degraded = False
+        degraded_max_games = max(1, int(max_games))
+
+        for idx, ref in enumerate(refs, start=1):
+            now = time.perf_counter()
+            elapsed = now - t0
+            elapsed_since_hb = now - last_heartbeat_ts
+            should_hb = idx == 1 or (idx % heartbeat_every == 0) or (elapsed_since_hb >= heartbeat_seconds)
+            if callable(heartbeat_cb) and should_hb:
+                done = max(1, last_ok + last_fail)
+                payload = {
+                    "phase": "generate_candidates",
+                    "subphase": "validate_candidate",
+                    "elapsed": elapsed,
+                    "rate": float(done) / max(1e-9, elapsed),
+                    "last_ok": int(last_ok),
+                    "last_fail": int(last_fail),
+                }
+                if len(refs) > 1:
+                    payload["i"] = idx
+                    payload["n"] = len(refs)
+                heartbeat_cb(payload)
+                last_heartbeat_ts = now
+
+            if not degraded and elapsed >= soft_timeout_s:
+                degraded = True
+                degraded_max_games = max(validate_min_candidates, int(round(float(max_games) * degrade_fraction)))
+                print(
+                    f"⚠️ validate_candidate lento; ativando degrade (elapsed={elapsed:.1f}s max_games={int(max_games)}->{int(degraded_max_games)})",
+                    flush=True,
+                )
+
             result = self._result_for(ref)
             if not result:
+                last_fail += 1
                 continue
 
-            cand_games = candidate_callable(ref, int(tipo_jogo), int(max_games), context) or []
-            g_games = self.baseline.generate(ref, int(tipo_jogo), int(max_games), variant="global")
-            r_games = self.baseline.generate(ref, int(tipo_jogo), int(max_games), variant="recent_120")
+            current_max_games = degraded_max_games if degraded else int(max_games)
+            cand_games = candidate_callable(ref, int(tipo_jogo), int(current_max_games), context) or []
+            g_games = self.baseline.generate(ref, int(tipo_jogo), int(current_max_games), variant="global")
+            r_games = self.baseline.generate(ref, int(tipo_jogo), int(current_max_games), variant="recent_120")
 
-            cand_sum = compute_score_summary(compute_hits_distribution(cand_games, result), compute_portfolio_diversity(cand_games))
-            g_sum = compute_score_summary(compute_hits_distribution(g_games, result), compute_portfolio_diversity(g_games))
-            r_sum = compute_score_summary(compute_hits_distribution(r_games, result), compute_portfolio_diversity(r_games))
+            if degraded:
+                cand_sum = compute_score_summary(compute_hits_distribution(cand_games, result), diversity=0.0)
+                g_sum = compute_score_summary(compute_hits_distribution(g_games, result), diversity=0.0)
+                r_sum = compute_score_summary(compute_hits_distribution(r_games, result), diversity=0.0)
+            else:
+                cand_sum = compute_score_summary(compute_hits_distribution(cand_games, result), compute_portfolio_diversity(cand_games))
+                g_sum = compute_score_summary(compute_hits_distribution(g_games, result), compute_portfolio_diversity(g_games))
+                r_sum = compute_score_summary(compute_hits_distribution(r_games, result), compute_portfolio_diversity(r_games))
 
             cand_scores.append(float(cand_sum["score_proxy"]))
             bglob_scores.append(float(g_sum["score_proxy"]))
             brec_scores.append(float(r_sum["score_proxy"]))
             cand_hit.append(float(cand_sum["hit_max"]))
             base_hit.append(max(float(g_sum["hit_max"]), float(r_sum["hit_max"])))
+            last_ok += 1
 
         if not cand_scores:
             return {
@@ -113,6 +164,7 @@ class StrategyValidator:
             "baseline_hit_max_mean": float(bhit),
             "passes_baseline": bool(passes_baseline),
             "passes_validation": bool(passes_validation),
+            "degraded": bool(degraded),
             "reason": "ok" if passes_validation else "below_baseline_or_low_margin",
         }
 

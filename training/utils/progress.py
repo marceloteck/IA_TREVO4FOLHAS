@@ -107,7 +107,15 @@ class ProgressPrinter:
             elapsed = float(data.get("elapsed", 0.0))
             rate = float(data.get("rate", 0.0))
             extra_rate = f" rate={rate:.1f}/s" if rate > 0 else ""
-            self.log(f"💓 activity phase={self.state.get('phase')} detail={sub} i={i}/{n} elapsed={elapsed:.1f}s{extra_rate}")
+            if n > 0:
+                self.log(f"💓 activity phase={self.state.get('phase')} detail={sub} i={i}/{n} elapsed={elapsed:.1f}s{extra_rate}")
+            else:
+                last_ok = int(data.get("last_ok", 0))
+                last_fail = int(data.get("last_fail", 0))
+                self.log(
+                    f"💓 activity phase={self.state.get('phase')} detail={sub} elapsed={elapsed:.1f}s"
+                    f" last_ok={last_ok} last_fail={last_fail}{extra_rate}"
+                )
 
     def log_step(self, data: Dict[str, Any]) -> None:
         msg = " | ".join(
