@@ -105,6 +105,14 @@ class StructuralCoreProtectBrain(BaseBrain):
 
     def _build_core(self, context: Dict[str, Any]) -> List[int]:
         historico = context.get("historico_recente") or []
+        cache = context.setdefault("_brain_runtime_cache", {})
+        cache_key = f"{self.id}:core"
+        fingerprint = (len(historico), tuple(historico[-1]) if historico else ())
+
+        cached = cache.get(cache_key)
+        if cached and cached.get("fingerprint") == fingerprint:
+            return list(cached.get("core", []))
+
         recent = historico[-self.janela_recente :] if historico else []
         coocc = Counter()
         freq = Counter()
@@ -116,7 +124,9 @@ class StructuralCoreProtectBrain(BaseBrain):
                     coocc[key] += 1
 
         if not freq:
-            return list(self.state.get("core_seed", []))[: self.core_size]
+            core_seed = list(self.state.get("core_seed", []))[: self.core_size]
+            cache[cache_key] = {"fingerprint": fingerprint, "core": list(core_seed)}
+            return core_seed
 
         ranked = sorted(coocc.items(), key=lambda x: x[1], reverse=True)[: self.max_blocks]
         score_map = defaultdict(int)
@@ -129,6 +139,8 @@ class StructuralCoreProtectBrain(BaseBrain):
         if len(core) < self.core_size:
             extras = [d for d, _ in freq.most_common() if d not in core]
             core.extend(extras[: self.core_size - len(core)])
+
+        cache[cache_key] = {"fingerprint": fingerprint, "core": list(core)}
         return core
 
     def _frequency_weights(self, context: Dict[str, Any]) -> Dict[int, float]:
