@@ -1527,6 +1527,10 @@ def main() -> None:
                     )
                     if extra_actions:
                         governance_decision.actions.extend(extra_actions)
+                        if any(str(a).startswith("FREEZE_AUTOTUNING:") for a in extra_actions):
+                            freeze_until = int(governance.history.get("freeze_active_until_step", governance.history.get("autotuning_frozen_until_step", 0)))
+                            freeze_cd = int(governance.cfg.get("anti_self_deception", {}).get("freeze_cooldown_steps", 0))
+                            log(f"🧊 Autotuning congelado até step={freeze_until} (cooldown={freeze_cd})")
 
                     governance_snapshot = {
                         "policy": str(governance_decision.policy_name),
@@ -1563,6 +1567,11 @@ def main() -> None:
                 f"actions={list(governance_snapshot.get('actions', []))} | "
                 f"reason={governance_snapshot.get('reason', '')}"
             )
+            if (
+                str(governance_snapshot.get("policy", "")).upper() == "SAFE"
+                and str(governance_snapshot.get("reason", "")) == "low_conf_defensive"
+            ):
+                log("GOV:SAFE (low_conf)")
 
             progress.set_state(phase="generate_candidates", mode=mode, regime=regime, arm=arm.name, recipe=recipe.name)
             result = run_step(

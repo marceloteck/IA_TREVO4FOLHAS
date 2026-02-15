@@ -6,19 +6,19 @@
       "pool_size_delta": 2,
       "coverage_alpha": 0.45,
       "min_pair_coverage": 0.35,
-      "max_clone_jaccard": 0.70
+      "max_clone_jaccard": 0.7
     },
     "NORMAL": {
       "max_games_mult": 1.0,
       "pool_size_delta": 0,
       "coverage_alpha": 0.25,
-      "min_pair_coverage": 0.30,
+      "min_pair_coverage": 0.3,
       "max_clone_jaccard": 0.75
     },
     "AGGRESSIVE": {
       "max_games_mult": 1.2,
       "pool_size_delta": -1,
-      "coverage_alpha": 0.20,
+      "coverage_alpha": 0.2,
       "min_pair_coverage": 0.28,
       "max_clone_jaccard": 0.78
     }
@@ -31,12 +31,18 @@
     "confidence_red": 0.45,
     "delta14_green": 0.03,
     "delta14_red": -0.03,
-    "structural_stagnation_forces_safe": true
+    "structural_stagnation_forces_safe": true,
+    "true_red_requires_status_red": true,
+    "true_red_reward_threshold": -0.3,
+    "true_red_reward_requires_consecutive": 3
   },
   "anti_self_deception": {
     "freeze_autotuning_on_red": true,
     "freeze_autotuning_steps": 500,
     "block_aggressive_on_red": true,
-    "min_updates_before_allow_aggressive": 10
+    "min_updates_before_allow_aggressive": 10,
+    "freeze_autotuning_on_true_red": true,
+    "freeze_cooldown_steps": 800,
+    "block_aggressive_on_true_red": true
   }
 }
