@@ -195,3 +195,4 @@ cython_debug/
 #  refer to https://docs.cursor.com/context/ignore-files
 .cursorignore
 .cursorindexingignore
+reports/lotofacil_tmp_1771095588.db
