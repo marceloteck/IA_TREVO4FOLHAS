@@ -59,6 +59,7 @@ class GovernanceManager:
             "last_policy": "NORMAL",
             "delta14_ema": None,
             "reward_ema": None,
+            "safe_streak": 0,
         }
 
     def get_state(self) -> Dict[str, Any]:
@@ -83,6 +84,7 @@ class GovernanceManager:
                 "last_policy": str(state.get("last_policy", self.history.get("last_policy", "NORMAL"))),
                 "delta14_ema": float(state.get("delta14_ema", self.history.get("delta14_ema", 0.0) or 0.0)),
                 "reward_ema": float(state.get("reward_ema", self.history.get("reward_ema", 0.0) or 0.0)),
+                "safe_streak": int(state.get("safe_streak", self.history.get("safe_streak", 0))),
             }
         )
 
@@ -266,6 +268,21 @@ class GovernanceManager:
             policy = "NORMAL"
             actions.append("BLOCK_AGGRESSIVE_MIN_UPDATES")
             reason = "neutral_band"
+
+        if policy == "SAFE":
+            entropy_ok = float(inputs.entropy) >= float(rules.get("safe_diversity_entropy_min", 0.62))
+            clone_ok = float(inputs.clone_ratio) <= float(rules.get("safe_diversity_clone_max", 0.38))
+            cov_ok = float(inputs.pair_coverage) >= float(rules.get("safe_diversity_cov_min", 0.22))
+            near_exit = float(conf_smooth) >= (low_enter + float(rules.get("safe_diversity_conf_margin", 0.02)))
+            if entropy_ok and clone_ok and cov_ok and near_exit:
+                policy = "NORMAL"
+                actions.append("DIVERSITY_OVERRIDE")
+                reason = "diversity_override"
+
+        if policy == "SAFE":
+            self.history["safe_streak"] = int(self.history.get("safe_streak", 0)) + 1
+        else:
+            self.history["safe_streak"] = 0
 
         if policy not in policies:
             policy = "NORMAL" if "NORMAL" in policies else next(iter(policies.keys()), "SAFE")

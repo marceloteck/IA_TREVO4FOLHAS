@@ -141,6 +141,54 @@ def _decode_obj(blob: str) -> Any:
     return pickle.loads(base64.b64decode(blob.encode("ascii")))
 
 
+
+
+def _git_short_hash() -> str:
+    try:
+        return str(try_get_git_commit() or "")[:12]
+    except Exception:
+        return ""
+
+
+def _atomic_write_json(path: Path, payload: Dict[str, Any]) -> None:
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.parent.mkdir(parents=True, exist_ok=True)
+    tmp.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    tmp.replace(path)
+
+
+def _normalize_resume_state(resume_state: Dict[str, Any], trainable: Sequence[int], done: int) -> tuple[Dict[str, Any], str, int, int]:
+    if not isinstance(resume_state, dict):
+        return {}, "reset", int(done), 0
+    out = dict(resume_state)
+    step_prev = int(out.get("step_global", out.get("step", done)))
+    conc_prev = int(out.get("concurso_ref", 0))
+    if not trainable:
+        out["step_global"] = max(0, step_prev)
+        out["step"] = out["step_global"]
+        return out, "normal", step_prev, conc_prev
+
+    min_ref = int(min(trainable))
+    max_ref = int(max(trainable))
+    reason = "normal"
+    new_conc = conc_prev
+    if conc_prev < min_ref or conc_prev > max_ref:
+        new_conc = max_ref
+        reason = "reset"
+
+    new_step = max(0, step_prev)
+    if reason == "normal":
+        expected = trainable.index(new_conc) + 1 if new_conc in trainable else 0
+        if expected > 0 and abs(new_step - expected) > max(200, expected // 2):
+            new_step = expected
+            reason = "rebase"
+    else:
+        new_step = trainable.index(new_conc) + 1 if new_conc in trainable else 0
+
+    out["concurso_ref"] = int(new_conc)
+    out["step_global"] = int(new_step)
+    out["step"] = int(new_step)
+    return out, reason, step_prev, conc_prev
 def _current_brain_mask(hub: BrainHub) -> List[str]:
     out: List[str] = []
     for b in getattr(hub, "brains", []):
@@ -1162,7 +1210,7 @@ def log_smart_summary(
     log("=========================================")
     log(f"📌 run_id={run_id} | run_name={run_name}")
     log(f"🔢 steps={done}")
-    log(f"🔥 total_14+={totals['q14']} | 🏆 total_15={totals['q15']} | 💾 memoria+={totals['mem']}")
+    log(f"🔥 totais_globais_14+={totals['q14']} | 🏆 totais_globais_15={totals['q15']} | 💾 memoria_global+={totals['mem']}")
     log(f"🧠 best_arm={best_arm[0]} | reward_médio={best_arm[1].mean_reward:.3f} | melhor_hit={best_arm[1].best_hit}")
     log(
         f"🧬 best_recipe_any={best_recipe_name}({best_recipe_status}) | "
@@ -1427,6 +1475,7 @@ def main() -> None:
                 telemetry_writer.log_run_artifact(int(meta_run_id), k, v)
 
         if resume_state:
+            resume_state, resume_reason, prev_step, prev_ref = _normalize_resume_state(dict(resume_state), trainable, done)
             try:
                 random.setstate(_decode_obj(str(resume_state.get("rng_state_py", ""))))
             except Exception:
@@ -1446,7 +1495,7 @@ def main() -> None:
             governance_snapshot = dict(resume_state.get("governance_snapshot", governance_snapshot))
             governance.set_state(dict(resume_state.get("governance_state", {})))
             reward_history = list(resume_state.get("reward_history", reward_history))
-            done = int(resume_state.get("step", done))
+            done = int(resume_state.get("step_global", resume_state.get("step", done)))
             last_mode = str(resume_state.get("mode", last_mode))
             last_decision_policy = dict(resume_state.get("policy", last_decision_policy))
             last_diversity = float(resume_state.get("last_diversity", last_diversity))
@@ -1456,7 +1505,9 @@ def main() -> None:
                 pos = (trainable.index(restored_ref) + 1) % max(1, len(trainable))
             _restore_brain_mask(hub, resume_state.get("policy", {}).get("brain_mask", []))
             learning_snapshot = dict(resume_state.get("learning_snapshot", learning_snapshot))
-            log(f"♻️ Auto-resume aplicado no step={done} concurso_ref={restored_ref}")
+            if resume_reason != "normal":
+                log(f"⚠️ resume_rebased reason={resume_reason} step={prev_step}->{done} concurso_ref={prev_ref}->{restored_ref}")
+            log(f"♻️ Auto-resume aplicado: step_global {prev_step}->{done} | concurso_ref {prev_ref}->{restored_ref} | motivo={resume_reason}")
 
         while True:
             if args.steps > 0 and done >= int(args.steps):
@@ -1470,8 +1521,10 @@ def main() -> None:
                 pos = 0
             concurso_n = int(trainable[pos])
             pos += 1
+            trace_id = f"{int(run_id)}-{int(done+1)}-{int(concurso_n)}"
 
             step_timer.start_step()
+            log(f"🔎 trace_id={trace_id} run_id={run_id} step={int(done+1)} N={concurso_n} phase=start")
             progress.set_state(step=int(done + 1), concurso=concurso_n)
             progress.set_phase("features", detail="context")
 
@@ -1660,10 +1713,10 @@ def main() -> None:
                 log(f"⚠️ governance fallback: {_gov_exc}")
 
             log(
-                "🧭 GOVERNANCE: "
+                f"🧭 GOVERNANCE: trace_id={trace_id} | "
                 f"policy={str(governance_snapshot.get('policy', 'NORMAL'))} | "
-                f"conf={float(getattr(governance_decision, 'confidence_raw', governance_inputs.confidence_score or 0.5)):.2f}"
-                f"→{float(getattr(governance_decision, 'confidence_smooth', governance_inputs.confidence_score or 0.5)):.2f}(ema) | "
+                f"conf_raw={float(getattr(governance_decision, 'confidence_raw', governance_inputs.confidence_score or 0.5)):.2f} | "
+                f"conf_ema={float(getattr(governance_decision, 'confidence_smooth', governance_inputs.confidence_score or 0.5)):.2f} | "
                 f"Δ14={float(governance_inputs.delta14):+.3f} | "
                 f"ent={float(governance_inputs.entropy):.2f} | "
                 f"clone={float(governance_inputs.clone_ratio):.2f} | "
@@ -1684,6 +1737,7 @@ def main() -> None:
 
             progress.set_state(mode=mode, regime=regime, arm=arm.name, recipe=recipe.name)
             progress.set_phase("generate_candidates", detail="core_protect_build")
+            progress.tick("generate_candidates", "core_protect_build", done + 1, int(args.steps) if int(args.steps) > 0 else None)
 
             def _sampling_heartbeat(payload: dict) -> None:
                 try:
@@ -1697,34 +1751,39 @@ def main() -> None:
                 safe_sampling_fallback=bool(performance_cfg.get("safe_sampling_fallback", True)),
                 weighted_sample_max_s=float(performance_cfg.get("weighted_sample_max_s", 10.0)),
             )
-            result = run_step(
-                conn=conn,
-                hub=hub,
-                concurso_n=concurso_n,
-                arm=arm,
-                recipe=recipe,
-                recent_window=int(args.recent_window),
-                avaliar_top_k=int(args.avaliar_top_k),
-                min_mem=int(args.min_mem),
-                reward_q15=float(args.reward_q15),
-                reward_q14=float(args.reward_q14),
-                mode=mode,
-                portfolio_builder=portfolio_builder,
-                portfolio_cfg=portfolio_cfg,
-                forced_brains=list(mode_cfg.get("core_brains", [])) if mode == "production" else [],
-                experimental_brains=slots.get("candidate_brains", []),
-                memory_refiner_cfg=memory_refiner_cfg,
-                coverage_optimizer=coverage_optimizer,
-                coverage_alpha_boost=float(risk_snapshot.get("coverage_alpha_boost", 0.0)),
-                structural_stagnation=bool(structural_snapshot.get("structural_stagnation", False)),
-                avaliar_top_k_override=int(applied_gen_params.get("max_jogos", int(args.avaliar_top_k))),
-                pool_size_override=int(applied_gen_params.get("pool_size", int(arm.top_n))),
-                coverage_alpha_override=float(applied_gen_params.get("coverage_alpha", coverage_cfg.get("alpha", 0.25))) - float(coverage_cfg.get("alpha", 0.25)),
-                min_pair_coverage_override=float(applied_gen_params.get("min_pair_coverage", coverage_cfg.get("min_pair_coverage", 0.30))),
-                max_clone_jaccard_override=float(applied_gen_params.get("max_clone_jaccard", 0.75)),
-                progress=progress,
-                runtime_cfg=learning_monitor_cfg,
-            )
+            try:
+                result = run_step(
+                    conn=conn,
+                    hub=hub,
+                    concurso_n=concurso_n,
+                    arm=arm,
+                    recipe=recipe,
+                    recent_window=int(args.recent_window),
+                    avaliar_top_k=int(args.avaliar_top_k),
+                    min_mem=int(args.min_mem),
+                    reward_q15=float(args.reward_q15),
+                    reward_q14=float(args.reward_q14),
+                    mode=mode,
+                    portfolio_builder=portfolio_builder,
+                    portfolio_cfg=portfolio_cfg,
+                    forced_brains=list(mode_cfg.get("core_brains", [])) if mode == "production" else [],
+                    experimental_brains=slots.get("candidate_brains", []),
+                    memory_refiner_cfg=memory_refiner_cfg,
+                    coverage_optimizer=coverage_optimizer,
+                    coverage_alpha_boost=float(risk_snapshot.get("coverage_alpha_boost", 0.0)),
+                    structural_stagnation=bool(structural_snapshot.get("structural_stagnation", False)),
+                    avaliar_top_k_override=int(applied_gen_params.get("max_jogos", int(args.avaliar_top_k))),
+                    pool_size_override=int(applied_gen_params.get("pool_size", int(arm.top_n))),
+                    coverage_alpha_override=float(applied_gen_params.get("coverage_alpha", coverage_cfg.get("alpha", 0.25))) - float(coverage_cfg.get("alpha", 0.25)),
+                    min_pair_coverage_override=float(applied_gen_params.get("min_pair_coverage", coverage_cfg.get("min_pair_coverage", 0.30))),
+                    max_clone_jaccard_override=float(applied_gen_params.get("max_clone_jaccard", 0.75)),
+                    progress=progress,
+                    runtime_cfg=learning_monitor_cfg,
+                )
+            except Exception as step_exc:
+                log(f"❌ step_error trace_id={trace_id} phase=run_step detail={step_exc}")
+                time.sleep(min(5.0, max(0.5, float(checkpoint_cfg.get('error_backoff_seconds', 1.5)))))
+                continue
             step_timer.mark("generate_candidates")
             progress.set_phase("evaluate_hits", detail="score_hits")
             configure_weighted_sampling_runtime()
@@ -1852,7 +1911,11 @@ def main() -> None:
                 )
                 if str(learning_snapshot.get("policy", {}).get("force_mode", "")) == "research":
                     log("→ Mudando para modo PESQUISA (learning monitor)")
+                for _evt in list(learning_snapshot.get("events", [])):
+                    if "anti_stagnation" in str(_evt):
+                        log(f"⚙️ {_evt}")
             step_timer.mark("evaluate_hits")
+            progress.tick("evaluate_hits", "score_hits", done + 1, int(args.steps) if int(args.steps) > 0 else None)
             last_diversity = float(diversity)
             last_hits_distribution = dict(result.get("hits_distribution", {}))
 
@@ -1984,8 +2047,12 @@ def main() -> None:
                     )
                 ck_state = {
                     "run_id": int(meta_run_id),
+                    "run_name": str(args.run_name),
                     "step": int(done),
+                    "step_global": int(done),
                     "concurso_ref": int(concurso_n),
+                    "timestamp": now_str(),
+                    "code_version": _git_short_hash(),
                     "rng_seed_base": int(seed),
                     "rng_state_py": _encode_obj(random.getstate()),
                     "rng_state_np": _encode_obj(np.random.get_state()),
@@ -2007,9 +2074,27 @@ def main() -> None:
                     "governance_state": governance.get_state(),
                 }
                 checkpoint_manager.save(ck_state)
+                inc_every = max(1, int(checkpoint_cfg.get("incremental_save_every_steps", checkpoint_cfg.get("autosave_steps", 100))))
+                if int(done) % inc_every == 0:
+                    t_inc = time.perf_counter()
+                    try:
+                        _atomic_write_json(ROOT / "logs" / "checkpoint_incremental.json", {
+                            "run_id": int(meta_run_id),
+                            "run_name": str(args.run_name),
+                            "step_global": int(done),
+                            "concurso_ref": int(concurso_n),
+                            "timestamp": now_str(),
+                            "code_version": _git_short_hash(),
+                        })
+                        dt_inc = time.perf_counter() - t_inc
+                        if dt_inc > 1.0:
+                            log(f"⚠️ autosave incremental lento ({dt_inc:.2f}s)")
+                    except Exception as _inc_exc:
+                        log(f"⚠️ autosave incremental falhou: {_inc_exc}")
 
             step_timer.mark("checkpoint")
             progress.set_phase("db_commit", detail="persist")
+            progress.tick("db_commit", "persist", done, max(1, int(args.steps) if int(args.steps) > 0 else done + 1))
             if bool(memory_refiner_cfg.get("enabled", False)) and done % max(1, int(memory_refiner_cfg.get("batch_size", 2000) // 400)) == 0:
                 try:
                     memory_refiner.run_batch(batch_size=int(memory_refiner_cfg.get("batch_size", 2000)))
@@ -2035,7 +2120,9 @@ def main() -> None:
                     score=rs.mean_reward,
                 )
 
-            if int(args.recipe_evolve_every) > 0 and done % int(args.recipe_evolve_every) == 0:
+            safe_cooldown = int(governance_cfg.get("safe_recipe_cooldown_steps", 80))
+            can_evolve_recipe = not (str(governance_snapshot.get("policy", "")).upper() == "SAFE" and int(governance.history.get("safe_streak", 0)) >= safe_cooldown)
+            if int(args.recipe_evolve_every) > 0 and done % int(args.recipe_evolve_every) == 0 and can_evolve_recipe:
                 child = evolve_recipe(recipes, recipe_stats, loaded, phase_scores, done, int(args.recipe_max_members))
                 if child.name not in recipes:
                     recipes[child.name] = child
@@ -2051,6 +2138,8 @@ def main() -> None:
                         score=0.0,
                     )
                     log(f"🧬 Nova receita criada automaticamente: {child.name} | membros={len(child.members)}")
+            elif int(args.recipe_evolve_every) > 0 and done % int(args.recipe_evolve_every) == 0 and not can_evolve_recipe:
+                log("🧬 recipe_evolve em cooldown (SAFE prolongado)")
 
             if int(args.revive_parked_every) > 0 and done % int(args.revive_parked_every) == 0:
                 revived = revive_parked_recipes(recipes, recipe_stats, phase_scores, limit=2)
@@ -2065,6 +2154,15 @@ def main() -> None:
                         status="candidate",
                         score=recipe_stats.get(name, RecipeStats()).mean_reward,
                     )
+
+            candidate_cap = max(3, int(governance_cfg.get("candidate_recipe_cap", 24)))
+            candidate_names = [k for k, v in recipes.items() if str(v.status) == "candidate"]
+            if len(candidate_names) > candidate_cap:
+                ordered_cands = sorted(candidate_names, key=lambda n: int(getattr(recipes[n], "generation", 0)), reverse=True)
+                for stale in ordered_cands[candidate_cap:]:
+                    recipes[stale].status = "parked"
+                    upsert_recipe(conn, recipes[stale])
+                log(f"🧬 candidate_recipe_cap aplicado: {len(candidate_names)}->{candidate_cap}")
 
             record_smart_step(
                 conn=conn,
@@ -2138,7 +2236,8 @@ def main() -> None:
             if bool(auto_tuning_cfg.get("enabled", False)):
                 freeze_until = int(governance.history.get("autotuning_frozen_until_step", 0))
                 if int(done) < freeze_until:
-                    pass
+                    freeze_remaining = max(0, int(freeze_until - int(done)))
+                    progress.log_every("freeze_autotuning", 30.0, f"🧊 freeze_remaining={freeze_remaining} step={int(done)}")
                 else:
                     auto_tuner.run_if_due(int(meta_run_id) if meta_run_id is not None else int(run_id), int(done))
 
