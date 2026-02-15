@@ -5,8 +5,10 @@ import base64
 import hashlib
 import json
 import math
+import os
 import numpy as np
 import pickle
+import ctypes
 import random
 import sqlite3
 import subprocess
@@ -62,6 +64,7 @@ from training.tuning.auto_tuner import AutoTuner
 from training.utils.comparador import contar_acertos
 from training.utils.progress import Heartbeat, ProgressPrinter, StepTimer
 from training.utils.console_panel import make_panel_line
+from training.brains._utils import configure_weighted_sampling_runtime
 
 
 def now_str() -> str:
@@ -88,6 +91,36 @@ def _status_label(status: str) -> str:
         "regressing": "REGREDINDO",
         "warmup": "WARMUP",
     }.get(str(status), "WARMUP")
+
+
+ANSI_COLORS_ENABLED = False
+
+
+def _try_enable_windows_vt() -> bool:
+    if os.name != "nt":
+        return True
+    try:
+        kernel32 = ctypes.windll.kernel32
+        h = kernel32.GetStdHandle(-11)
+        mode = ctypes.c_uint()
+        if kernel32.GetConsoleMode(h, ctypes.byref(mode)) == 0:
+            return False
+        ENABLE_VIRTUAL_TERMINAL_PROCESSING = 0x0004
+        return bool(kernel32.SetConsoleMode(h, mode.value | ENABLE_VIRTUAL_TERMINAL_PROCESSING))
+    except Exception:
+        return False
+
+
+def _status_colored(status: str, text: str) -> str:
+    if not ANSI_COLORS_ENABLED:
+        return text
+    color = {
+        "learning": "[32m",
+        "stable": "[33m",
+        "regressing": "[31m",
+        "warmup": "[37m",
+    }.get(str(status), "[37m")
+    return f"{color}{text}[0m"
 
 
 def load_json_config(path: Path, default: Dict[str, Any]) -> Dict[str, Any]:
@@ -777,6 +810,8 @@ def run_step(
     coverage_alpha_override: float | None = None,
     min_pair_coverage_override: float | None = None,
     max_clone_jaccard_override: float | None = None,
+    progress: ProgressPrinter | None = None,
+    runtime_cfg: Dict[str, Any] | None = None,
 ) -> Dict[str, Any]:
     result_n1 = fetch_result(conn, concurso_n + 1)
     if not result_n1:
@@ -803,6 +838,13 @@ def run_step(
     active_ids = _augment_members(active_ids, forced=forced_brains, experimental=experimental_brains)
     brains_ativos = _set_enabled_brains(hub, active_ids)
     per_brain_map = build_per_brain_map(active_ids, phase_scores, arm.base_per_brain, arm.boost_top_brains, recipe.boosts)
+
+    runtime_cfg = dict(runtime_cfg or {})
+    hb_seconds = max(0.2, float(runtime_cfg.get("progress_heartbeat_seconds", 2.0)))
+    hb_items = max(10, int(runtime_cfg.get("progress_heartbeat_every_items", 200)))
+    soft_timeout_s = max(5.0, float(runtime_cfg.get("evaluate_hits_soft_timeout_s", 120.0)))
+    degrade_fraction = min(1.0, max(0.1, float(runtime_cfg.get("evaluate_hits_degrade_fraction", 0.5))))
+    min_candidates = max(10, int(runtime_cfg.get("evaluate_hits_min_candidates", 200)))
 
     t0 = time.time()
     effective_top_n = int(pool_size_override) if pool_size_override is not None else int(arm.top_n)
@@ -913,8 +955,58 @@ def run_step(
     hits_distribution = {"12": 0, "13": 0, "14": 0, "15": 0}
     evaluated_games: List[List[int]] = []
     tentativa = 1
+    total_candidates = int(len(c15) + len(c18))
+    processed_candidates = 0
+    evaluate_start = time.perf_counter()
+    last_hb = evaluate_start
+    degrade_mode = False
+    stop_processing = False
+    degrade_target = total_candidates
+    if progress is not None and total_candidates > 0:
+        progress.heartbeat(
+            {
+                "phase": "evaluate_hits",
+                "subphase": "score_hits",
+                "i": 0,
+                "n": int(total_candidates),
+                "elapsed": 0.0,
+            },
+            log_every_s=hb_seconds,
+        )
+
     for tipo, cands in ((15, c15), (18, c18)):
         for c in cands:
+            processed_candidates += 1
+            now_eval = time.perf_counter()
+            elapsed_eval = now_eval - evaluate_start
+            if progress is not None and (((processed_candidates % hb_items) == 0) or ((now_eval - last_hb) >= hb_seconds)):
+                rate = float(processed_candidates) / max(1e-6, elapsed_eval)
+                progress.heartbeat(
+                    {
+                        "phase": "evaluate_hits",
+                        "subphase": "score_hits",
+                        "i": int(processed_candidates),
+                        "n": int(total_candidates),
+                        "elapsed": float(elapsed_eval),
+                        "rate": float(rate),
+                    },
+                    log_every_s=hb_seconds,
+                )
+                last_hb = now_eval
+
+            if (not degrade_mode) and elapsed_eval >= soft_timeout_s:
+                degrade_mode = True
+                degrade_target = max(min_candidates, int(total_candidates * degrade_fraction))
+                if progress is not None:
+                    progress.log(
+                        f"⚠️ evaluate_hits lento, ativando degrade_mode target={degrade_target}/{total_candidates}",
+                        update_last_log=True,
+                    )
+
+            if degrade_mode and processed_candidates > degrade_target:
+                stop_processing = True
+                break
+
             jogo = sorted(set(int(x) for x in c.get("jogo", []) if x is not None))
             if len(jogo) != tipo:
                 continue
@@ -961,6 +1053,8 @@ def run_step(
                 min_mem=int(min_mem),
             ):
                 mem += 1
+        if stop_processing:
+            break
 
     repeat_rate = rep_sum / float(rep_count) if rep_count > 0 else 0.0
     legacy_reward = compute_reward(q14, q15, best, regime, repeat_rate, reward_q15, reward_q14)
@@ -1058,6 +1152,8 @@ def log_smart_summary(
 ) -> None:
     best_arm = max(arm_stats.items(), key=lambda kv: kv[1].mean_reward) if arm_stats else ("-", ArmStats())
     best_recipe = max(recipe_stats.items(), key=lambda kv: kv[1].mean_reward) if recipe_stats else ("-", RecipeStats())
+    parked_items = [(k, v) for k, v in recipe_stats.items() if str(recipes.get(k, SmartRecipe("-", members=[])).status) == "parked"]
+    best_recipe_parked = max(parked_items, key=lambda kv: kv[1].mean_reward) if parked_items else ("-", RecipeStats())
     best_recipe_name = best_recipe[0]
     best_recipe_status = recipes.get(best_recipe_name, SmartRecipe("-", members=[])).status
 
@@ -1069,8 +1165,9 @@ def log_smart_summary(
     log(f"🔥 total_14+={totals['q14']} | 🏆 total_15={totals['q15']} | 💾 memoria+={totals['mem']}")
     log(f"🧠 best_arm={best_arm[0]} | reward_médio={best_arm[1].mean_reward:.3f} | melhor_hit={best_arm[1].best_hit}")
     log(
-        f"🧬 best_recipe={best_recipe_name}({best_recipe_status}) | "
-        f"reward_médio={best_recipe[1].mean_reward:.3f} | melhor_hit={best_recipe[1].best_hit}"
+        f"🧬 best_recipe_any={best_recipe_name}({best_recipe_status}) | "
+        f"reward_médio={best_recipe[1].mean_reward:.3f} | melhor_hit={best_recipe[1].best_hit} | "
+        f"best_recipe_parked={best_recipe_parked[0]} | parked_reward={best_recipe_parked[1].mean_reward:.3f}"
     )
     log("✅ Treino continua automaticamente...")
     log("=========================================")
@@ -1208,11 +1305,16 @@ def main() -> None:
     validator_cfg = load_json_config(ROOT / "config" / "validator.json", {"enabled": False})
     reporting_cfg = load_json_config(ROOT / "config" / "reporting.json", {"enabled": False})
     performance_cfg = load_json_config(ROOT / "config" / "performance.json", {"profile": "low_cpu"})
+    progress.set_progress_log_every(float(performance_cfg.get("progress_log_every_s", 15.0)))
     auto_tuning_cfg = load_json_config(ROOT / "config" / "auto_tuning.json", {"enabled": False})
     learning_monitor_cfg = load_json_config(ROOT / "config" / "learning_monitor.json", {"enabled": False})
+    progress.set_watchdog_dump_cooldown(float(learning_monitor_cfg.get("watchdog_dump_cooldown_s", 300.0)))
     coverage_cfg = load_json_config(ROOT / "config" / "coverage.json", {"enabled": False, "alpha": 0.25})
     risk_gate_cfg = load_json_config(ROOT / "config" / "risk_gate.json", {"enabled": False})
     governance_cfg = load_json_config(ROOT / "config" / "governance.json", {"enabled": False})
+
+    global ANSI_COLORS_ENABLED
+    ANSI_COLORS_ENABLED = bool(learning_monitor_cfg.get("ansi_colors", True)) and _try_enable_windows_vt()
 
     panel_enabled = bool(int(args.panel))
     panel_every_steps = int(args.panel_every_steps) if int(args.panel_every_steps) > 0 else max(1, int(learning_monitor_cfg.get("update_every_steps", 10)))
@@ -1370,7 +1472,8 @@ def main() -> None:
             pos += 1
 
             step_timer.start_step()
-            progress.set_state(step=int(done + 1), concurso=concurso_n, phase="features")
+            progress.set_state(step=int(done + 1), concurso=concurso_n)
+            progress.set_phase("features", detail="context")
 
             context_probe = build_context(conn, concurso_n, 80)
             regime = detect_regime(context_probe)
@@ -1559,7 +1662,8 @@ def main() -> None:
             log(
                 "🧭 GOVERNANCE: "
                 f"policy={str(governance_snapshot.get('policy', 'NORMAL'))} | "
-                f"conf={float(governance_inputs.confidence_score or 0.5):.2f} | "
+                f"conf={float(getattr(governance_decision, 'confidence_raw', governance_inputs.confidence_score or 0.5)):.2f}"
+                f"→{float(getattr(governance_decision, 'confidence_smooth', governance_inputs.confidence_score or 0.5)):.2f}(ema) | "
                 f"Δ14={float(governance_inputs.delta14):+.3f} | "
                 f"ent={float(governance_inputs.entropy):.2f} | "
                 f"clone={float(governance_inputs.clone_ratio):.2f} | "
@@ -1573,7 +1677,21 @@ def main() -> None:
             ):
                 log("GOV:SAFE (low_conf)")
 
-            progress.set_state(phase="generate_candidates", mode=mode, regime=regime, arm=arm.name, recipe=recipe.name)
+            progress.set_state(mode=mode, regime=regime, arm=arm.name, recipe=recipe.name)
+            progress.set_phase("generate_candidates", detail="core_protect_build")
+
+            def _sampling_heartbeat(payload: dict) -> None:
+                try:
+                    progress.heartbeat(payload, log_every_s=float(performance_cfg.get("progress_log_every_s", 15.0)))
+                except Exception:
+                    pass
+
+            configure_weighted_sampling_runtime(
+                heartbeat_cb=_sampling_heartbeat,
+                heartbeat_every_s=float(performance_cfg.get("heartbeat_every_s", 0.5)),
+                safe_sampling_fallback=bool(performance_cfg.get("safe_sampling_fallback", True)),
+                weighted_sample_max_s=float(performance_cfg.get("weighted_sample_max_s", 10.0)),
+            )
             result = run_step(
                 conn=conn,
                 hub=hub,
@@ -1599,9 +1717,12 @@ def main() -> None:
                 coverage_alpha_override=float(applied_gen_params.get("coverage_alpha", coverage_cfg.get("alpha", 0.25))) - float(coverage_cfg.get("alpha", 0.25)),
                 min_pair_coverage_override=float(applied_gen_params.get("min_pair_coverage", coverage_cfg.get("min_pair_coverage", 0.30))),
                 max_clone_jaccard_override=float(applied_gen_params.get("max_clone_jaccard", 0.75)),
+                progress=progress,
+                runtime_cfg=learning_monitor_cfg,
             )
             step_timer.mark("generate_candidates")
-            progress.set_state(phase="evaluate_hits")
+            progress.set_phase("evaluate_hits", detail="score_hits")
+            configure_weighted_sampling_runtime()
 
             a = arm_stats[arm.name]
             a.pulls += 1
@@ -1715,9 +1836,11 @@ def main() -> None:
             if bool(learning_snapshot.get("should_log", False)):
                 trend = dict(learning_snapshot.get("trend", {}))
                 base = dict(learning_snapshot.get("baseline", {}))
+                _st = str(learning_snapshot.get("status", "warmup"))
+                label = _status_colored(_st, _status_label(_st))
                 log(
-                    f"{_status_icon(str(learning_snapshot.get('status', 'warmup')))} STATUS: "
-                    f"{_status_label(str(learning_snapshot.get('status', 'warmup')))} | "
+                    f"{_status_icon(_st)} STATUS: "
+                    f"{label} | "
                     f"Δ14+={float(base.get('delta_q14_vs_baseline', 0.0))*100:+.2f}% | "
                     f"reward={float(learning_snapshot.get('metrics_main', {}).get('reward_mean', 0.0)):+.3f} | "
                     f"tend={float(trend.get('delta_reward', 0.0)):+.3f}"
@@ -1761,6 +1884,7 @@ def main() -> None:
             }
             if cand_stats["n"] >= 8 and bool(validator_cfg.get("enabled", False)):
                 def _candidate_callable(concurso_ref: int, tipo_jogo: int, max_games: int, context: dict):
+                    progress.set_phase("generate_candidates", detail="validate_candidate")
                     ctx = build_context(conn, int(concurso_ref), arm.janela)
                     pm = build_per_brain_map(loaded, phase_scores, arm.base_per_brain, arm.boost_top_brains, recipe.boosts)
                     g = hub.generate_games(context=ctx, size=int(tipo_jogo), per_brain=pm, top_n=min(120, int(max_games) * 3)) or []
@@ -1771,6 +1895,7 @@ def main() -> None:
                             out.append(jogo)
                     return out
 
+                progress.set_phase("generate_candidates", detail="validate_candidate")
                 validator_report = strategy_validator.validate_candidate(
                     candidate_callable=_candidate_callable,
                     concurso_ref=int(concurso_n),
@@ -1834,7 +1959,7 @@ def main() -> None:
                 conn.commit()
 
             step_timer.mark("train_meta")
-            progress.set_state(phase="checkpoint")
+            progress.set_phase("checkpoint", detail="save")
             ck_enabled = bool(checkpoint_cfg.get("enabled", False))
             save_every = max(1, int(checkpoint_cfg.get("save_every_steps", 5)))
             mode_switched = mode != str(prev_mode)
@@ -1879,7 +2004,7 @@ def main() -> None:
                 checkpoint_manager.save(ck_state)
 
             step_timer.mark("checkpoint")
-            progress.set_state(phase="db_commit")
+            progress.set_phase("db_commit", detail="persist")
             if bool(memory_refiner_cfg.get("enabled", False)) and done % max(1, int(memory_refiner_cfg.get("batch_size", 2000) // 400)) == 0:
                 try:
                     memory_refiner.run_batch(batch_size=int(memory_refiner_cfg.get("batch_size", 2000)))
@@ -1952,7 +2077,8 @@ def main() -> None:
 
             step_timer.mark("db_commit")
             phases = step_timer.end_step()
-            progress.set_state(phase="idle")
+            progress.set_phase("idle")
+            configure_weighted_sampling_runtime()
             if done == 1 or done % max(1, int(args.progress_every)) == 0:
                 best_arm = max(arm_stats.items(), key=lambda kv: kv[1].mean_reward)
                 best_recipe = max(recipe_stats.items(), key=lambda kv: kv[1].mean_reward)

@@ -17,5 +17,16 @@
     "copiar_ultimo_q14_rate": 0.09
   },
   "min_outcomes_para_sair_warmup": 120,
-  "baseline_mode": "soft"
+  "baseline_mode": "soft",
+  "ansi_colors": true,
+  "progress_heartbeat_seconds": 2.0,
+  "progress_heartbeat_every_items": 200,
+  "evaluate_hits_soft_timeout_s": 120,
+  "evaluate_hits_degrade_fraction": 0.5,
+  "evaluate_hits_min_candidates": 200,
+  "baseline_window_W": 30,
+  "gov_ema_alpha": 0.15,
+  "gov_low_enter": 0.45,
+  "gov_low_exit": 0.52,
+  "watchdog_dump_cooldown_s": 300
 }

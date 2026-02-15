@@ -6,5 +6,9 @@
     "enabled": true,
     "sleep_every_steps": 25,
     "sleep_ms": 30
-  }
+  },
+  "safe_sampling_fallback": true,
+  "weighted_sample_max_s": 10.0,
+  "heartbeat_every_s": 0.5,
+  "progress_log_every_s": 15.0
 }

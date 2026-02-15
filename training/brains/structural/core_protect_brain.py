@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from collections import Counter, defaultdict
+from collections import Counter, defaultdict, OrderedDict
+import time
 from typing import Any, Dict, List, Tuple
 
 from training.brains._utils import UNIVERSO, weighted_sample_without_replacement
@@ -39,6 +40,8 @@ class StructuralCoreProtectBrain(BaseBrain):
             "core_seed": [6, 7, 12, 18, 23],
             "block_penalties": {},
         }
+        self._core_cache: OrderedDict[tuple, List[int]] = OrderedDict()
+        self._core_cache_max = 128
 
     def evaluate_context(self, context: Dict[str, Any]) -> float:
         historico = context.get("historico_recente") or []
@@ -104,14 +107,29 @@ class StructuralCoreProtectBrain(BaseBrain):
         self._perf_update(concurso=int(concurso_n), pontos=int(pontos), jogos_gerados=1)
 
     def _build_core(self, context: Dict[str, Any]) -> List[int]:
+        t0 = time.perf_counter()
         historico = context.get("historico_recente") or []
         cache = context.setdefault("_brain_runtime_cache", {})
         cache_key = f"{self.id}:core"
-        fingerprint = (len(historico), tuple(historico[-1]) if historico else ())
+        concurso_ref = int(context.get("concurso_ref") or context.get("concurso") or 0)
+        fingerprint = (
+            concurso_ref,
+            len(historico),
+            tuple(historico[-1]) if historico else (),
+            int(self.core_size),
+            int(self.required_in_core),
+            int(self.janela_recente),
+            int(self.max_blocks),
+        )
 
         cached = cache.get(cache_key)
         if cached and cached.get("fingerprint") == fingerprint:
             return list(cached.get("core", []))
+        if fingerprint in self._core_cache:
+            core_hit = list(self._core_cache[fingerprint])
+            self._core_cache.move_to_end(fingerprint)
+            cache[cache_key] = {"fingerprint": fingerprint, "core": list(core_hit)}
+            return core_hit
 
         recent = historico[-self.janela_recente :] if historico else []
         coocc = Counter()
@@ -126,6 +144,9 @@ class StructuralCoreProtectBrain(BaseBrain):
         if not freq:
             core_seed = list(self.state.get("core_seed", []))[: self.core_size]
             cache[cache_key] = {"fingerprint": fingerprint, "core": list(core_seed)}
+            self._core_cache[fingerprint] = list(core_seed)
+            if len(self._core_cache) > self._core_cache_max:
+                self._core_cache.popitem(last=False)
             return core_seed
 
         ranked = sorted(coocc.items(), key=lambda x: x[1], reverse=True)[: self.max_blocks]
@@ -141,6 +162,14 @@ class StructuralCoreProtectBrain(BaseBrain):
             core.extend(extras[: self.core_size - len(core)])
 
         cache[cache_key] = {"fingerprint": fingerprint, "core": list(core)}
+        self._core_cache[fingerprint] = list(core)
+        self._core_cache.move_to_end(fingerprint)
+        if len(self._core_cache) > self._core_cache_max:
+            self._core_cache.popitem(last=False)
+
+        dt_ms = (time.perf_counter() - t0) * 1000.0
+        if dt_ms > 200.0:
+            print(f"perf: core_protect_brain._build_core {dt_ms:.1f}ms N={concurso_ref}", flush=True)
         return core
 
     def _frequency_weights(self, context: Dict[str, Any]) -> Dict[int, float]:
