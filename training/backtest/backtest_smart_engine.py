@@ -69,6 +69,8 @@ from training.brains._utils import configure_weighted_sampling_runtime
 
 
 CHECKPOINT_SCHEMA_VERSION = 2
+ESSENTIAL_TABLES = ("concursos", "checkpoint", "tentativas", "memoria_jogos")
+_HEARTBEAT_LAST_TS: Dict[str, float] = {}
 
 
 def now_str() -> str:
@@ -77,6 +79,48 @@ def now_str() -> str:
 
 def log(msg: str) -> None:
     print(f"[{now_str()}] {msg}", flush=True)
+
+
+def heartbeat(logger: Any, every_s: float = 10.0, **fields: Any) -> bool:
+    """Emite heartbeat periódico sem poluir logs e atualiza watchdog quando possível."""
+    every = max(0.2, float(every_s))
+    phase = str(fields.get("phase") or "general")
+    detail = str(fields.get("detail") or fields.get("subphase") or "-")
+    key = f"{phase}:{detail}"
+    now = time.time()
+    last = float(_HEARTBEAT_LAST_TS.get(key, 0.0))
+    if (now - last) < every:
+        return False
+    _HEARTBEAT_LAST_TS[key] = now
+
+    payload = {
+        "phase": phase,
+        "subphase": detail,
+        "i": int(fields.get("i", 0) or 0),
+        "n": int(fields.get("n", 0) or 0),
+        "elapsed": float(fields.get("elapsed", 0.0) or 0.0),
+    }
+    if "rate" in fields:
+        payload["rate"] = float(fields.get("rate", 0.0) or 0.0)
+
+    if hasattr(logger, "heartbeat"):
+        try:
+            logger.heartbeat(payload, log_every_s=every)
+            return True
+        except Exception:
+            pass
+
+    extra = str(fields.get("extra", "")).strip()
+    msg = (
+        f"💓 activity phase={phase} detail={detail} i={payload['i']}/{payload['n']} "
+        f"elapsed={payload['elapsed']:.1f}s"
+    )
+    if extra:
+        msg += f" extra={extra}"
+    if callable(logger):
+        logger(msg)
+        return True
+    return False
 
 
 def _status_icon(status: str) -> str:
@@ -161,12 +205,70 @@ def _atomic_write_json(path: Path, payload: Dict[str, Any]) -> None:
     tmp.replace(path)
 
 
-def _normalize_resume_state(resume_state: Dict[str, Any], trainable: Sequence[int], done: int) -> tuple[Dict[str, Any], str, int, int]:
+def _is_conn_alive(conn: sqlite3.Connection) -> bool:
+    try:
+        conn.execute("SELECT 1")
+        return True
+    except Exception:
+        return False
+
+
+def _persist_commit_fallback(payload: Dict[str, Any]) -> None:
+    out = ROOT / "logs" / "persist_fallback.jsonl"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    with out.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(payload, ensure_ascii=False) + "\n")
+
+
+def safe_db_commit(
+    conn: sqlite3.Connection,
+    *,
+    progress: ProgressPrinter | None = None,
+    trace_id: str = "-",
+    phase: str = "db_commit",
+    payload: Dict[str, Any] | None = None,
+    retries: int = 3,
+) -> bool:
+    if not _is_conn_alive(conn):
+        log(f"⚠️ conexão SQLite indisponível antes do commit trace_id={trace_id} phase={phase}")
+    for attempt in range(1, max(1, retries) + 1):
+        try:
+            conn.commit()
+            heartbeat(progress or log, every_s=10.0, phase="persist", detail=phase, i=attempt, n=retries, elapsed=float(attempt))
+            return True
+        except Exception as exc:
+            log(f"⚠️ commit falhou phase={phase} tentativa {attempt}/{retries} trace_id={trace_id} detail={exc}")
+            if attempt < retries:
+                time.sleep(0.2 * (2 ** (attempt - 1)))
+                continue
+            _persist_commit_fallback(
+                {
+                    "ts": now_str(),
+                    "trace_id": trace_id,
+                    "phase": phase,
+                    "error": str(exc),
+                    "payload": dict(payload or {}),
+                }
+            )
+            return False
+    return False
+
+
+def _normalize_resume_state(
+    resume_state: Dict[str, Any],
+    trainable: Sequence[int],
+    done: int,
+    db_step: int = 0,
+    db_concurso_ref: int = 0,
+    force_rebase: bool = False,
+) -> tuple[Dict[str, Any], str, int, int]:
     if not isinstance(resume_state, dict):
         return {}, "reset", int(done), 0
     out = dict(resume_state)
     step_prev = int(out.get("step_global", out.get("step", done)))
     conc_prev = int(out.get("concurso_ref", 0))
+    step_prev = max(step_prev, int(done), int(db_step))
+    conc_prev = max(conc_prev, int(db_concurso_ref))
     schema_version = int(out.get("schema_version", 1) or 1)
     out["schema_version"] = int(max(schema_version, CHECKPOINT_SCHEMA_VERSION))
     if not trainable:
@@ -193,7 +295,9 @@ def _normalize_resume_state(resume_state: Dict[str, Any], trainable: Sequence[in
         if reason == "normal":
             reason = "repair"
 
-    if schema_version < CHECKPOINT_SCHEMA_VERSION and new_step != step_prev:
+    if force_rebase:
+        reason = "rebase"
+    elif schema_version < CHECKPOINT_SCHEMA_VERSION and new_step != step_prev:
         reason = "rebase"
     elif reason == "normal" and new_step != step_prev:
         reason = "repair"
@@ -918,7 +1022,9 @@ def run_step(
     t0 = time.time()
     effective_top_n = int(pool_size_override) if pool_size_override is not None else int(arm.top_n)
     effective_top_n = max(16, effective_top_n)
+    heartbeat(progress or log, every_s=10.0, phase="generate_candidates", detail="hub.generate_games", elapsed=0.0)
     c15 = hub.generate_games(context=context, size=15, per_brain=per_brain_map, top_n=effective_top_n)
+    heartbeat(progress or log, every_s=10.0, phase="generate_candidates", detail="hub.generate_games", elapsed=float(time.time() - t0), extra="tipo=18")
     c18 = hub.generate_games(context=context, size=18, per_brain=per_brain_map, top_n=effective_top_n)
     dt = time.time() - t0
 
@@ -1032,16 +1138,7 @@ def run_step(
     stop_processing = False
     degrade_target = total_candidates
     if progress is not None and total_candidates > 0:
-        progress.heartbeat(
-            {
-                "phase": "evaluate_hits",
-                "subphase": "score_hits",
-                "i": 0,
-                "n": int(total_candidates),
-                "elapsed": 0.0,
-            },
-            log_every_s=hb_seconds,
-        )
+        heartbeat(progress, every_s=hb_seconds, phase="evaluate_hits", detail="score_hits", i=0, n=int(total_candidates), elapsed=0.0)
 
     for tipo, cands in ((15, c15), (18, c18)):
         for c in cands:
@@ -1050,16 +1147,15 @@ def run_step(
             elapsed_eval = now_eval - evaluate_start
             if progress is not None and (((processed_candidates % hb_items) == 0) or ((now_eval - last_hb) >= hb_seconds)):
                 rate = float(processed_candidates) / max(1e-6, elapsed_eval)
-                progress.heartbeat(
-                    {
-                        "phase": "evaluate_hits",
-                        "subphase": "score_hits",
-                        "i": int(processed_candidates),
-                        "n": int(total_candidates),
-                        "elapsed": float(elapsed_eval),
-                        "rate": float(rate),
-                    },
-                    log_every_s=hb_seconds,
+                heartbeat(
+                    progress,
+                    every_s=hb_seconds,
+                    phase="evaluate_hits",
+                    detail="score_hits",
+                    i=int(processed_candidates),
+                    n=int(total_candidates),
+                    elapsed=float(elapsed_eval),
+                    rate=float(rate),
                 )
                 last_hb = now_eval
 
@@ -1197,7 +1293,6 @@ def record_smart_step(
             now_str(),
         ),
     )
-    conn.commit()
 
 
 def build_default_arms() -> List[SmartArm]:
@@ -1291,24 +1386,112 @@ def _ensure_user_tables(conn: sqlite3.Connection) -> None:
     )
     conn.commit()
 
-def _bootstrap_database_if_missing_base() -> None:
-    """Garante schema/base mínima quando o DB está vazio ou sem tabela concursos."""
-    probe = get_conn()
-    try:
-        if safe_table_exists(probe, "concursos"):
-            return
-    finally:
-        probe.close()
+def _sqlite_locked(exc: Exception) -> bool:
+    msg = str(exc).lower()
+    return isinstance(exc, sqlite3.OperationalError) and ("locked" in msg or "busy" in msg)
 
-    log("[AUTO] Tabela 'concursos' ausente. Executando START/startBD.py automaticamente...")
+
+def _with_sqlite_retry(fn, retries: int = 5) -> Any:
+    delays = [0.5, 1.0, 2.0, 4.0, 8.0]
+    last_exc: Exception | None = None
+    for idx in range(max(1, retries)):
+        try:
+            return fn()
+        except Exception as exc:  # noqa: PERF203
+            last_exc = exc
+            if (not _sqlite_locked(exc)) or idx >= (retries - 1):
+                raise
+            wait = delays[min(idx, len(delays) - 1)]
+            log(f"⚠️ DB locked, retry {idx + 1}/{retries} em {wait:.1f}s")
+            time.sleep(wait)
+    if last_exc is not None:
+        raise last_exc
+    return None
+
+
+def _apply_bootstrap_pragmas(conn: sqlite3.Connection, busy_timeout_ms: int = 8000) -> None:
+    conn.execute("PRAGMA journal_mode=WAL;")
+    conn.execute("PRAGMA synchronous=NORMAL;")
+    conn.execute(f"PRAGMA busy_timeout={int(max(1000, busy_timeout_ms))};")
+
+
+def _is_bootstrap_consistent(conn: sqlite3.Connection, min_concursos: int = 1) -> bool:
+    for table in ESSENTIAL_TABLES:
+        if not safe_table_exists(conn, table):
+            return False
+    row = conn.execute("SELECT COUNT(*) FROM concursos").fetchone()
+    total = int(row[0]) if row and row[0] is not None else 0
+    return total >= int(max(1, min_concursos))
+
+
+def _run_startbd_with_progress(timeout_s: int = 180, hb_every_s: float = 10.0) -> None:
+    log("[AUTO] Base ausente/incompleta. Executando START/startBD.py automaticamente...")
     cmd = [sys.executable, str(ROOT / "START" / "startBD.py")]
-    proc = subprocess.run(cmd, capture_output=True, text=True)
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    t0 = time.perf_counter()
+    while proc.poll() is None:
+        elapsed = time.perf_counter() - t0
+        heartbeat(log, every_s=hb_every_s, phase="bootstrap_db", detail="importando concursos", elapsed=elapsed)
+        if elapsed >= float(timeout_s):
+            proc.kill()
+            raise TimeoutError(f"Timeout no bootstrap automático após {elapsed:.1f}s")
+        time.sleep(min(0.5, hb_every_s))
+
+    stdout, stderr = proc.communicate(timeout=5)
     if proc.returncode != 0:
-        err_tail = (proc.stderr or proc.stdout or "").strip()[-1200:]
+        err_tail = (stderr or stdout or "").strip()[-1200:]
         raise RuntimeError(
             "Falha na criação automática do banco via START/startBD.py. "
             "Execute manualmente 'python START/startBD.py'.\n" + err_tail
         )
+
+
+def _bootstrap_database_if_missing_base(busy_timeout_ms: int = 8000, min_concursos: int = 1) -> None:
+    """Bootstrap do banco com idempotência, progresso e rollback em falhas."""
+    probe = get_conn()
+    try:
+        _apply_bootstrap_pragmas(probe, busy_timeout_ms=busy_timeout_ms)
+        if _is_bootstrap_consistent(probe, min_concursos=min_concursos):
+            log("[OK] base já presente; pulando bootstrap")
+            return
+    finally:
+        probe.close()
+
+    def _run_bootstrap() -> None:
+        conn_boot = get_conn()
+        try:
+            _apply_bootstrap_pragmas(conn_boot, busy_timeout_ms=busy_timeout_ms)
+            conn_boot.execute("BEGIN IMMEDIATE")
+            heartbeat(log, every_s=2.0, phase="bootstrap_db", detail="check_schema", elapsed=0.0)
+            schema_sql = (ROOT / "data" / "database" / "db_schema.sql").read_text(encoding="utf-8")
+            conn_boot.executescript(schema_sql)
+            conn_boot.commit()
+        except Exception:
+            conn_boot.rollback()
+            raise
+        finally:
+            conn_boot.close()
+
+        _run_startbd_with_progress(timeout_s=180, hb_every_s=10.0)
+
+        conn_verify = get_conn()
+        try:
+            _apply_bootstrap_pragmas(conn_verify, busy_timeout_ms=busy_timeout_ms)
+            heartbeat(log, every_s=2.0, phase="bootstrap_db", detail="criando índices", elapsed=0.0)
+            conn_verify.execute("BEGIN IMMEDIATE")
+            ensure_indexes(conn_verify)
+            conn_verify.commit()
+            if not _is_bootstrap_consistent(conn_verify, min_concursos=min_concursos):
+                raise RuntimeError("Bootstrap terminou sem consistência mínima da base")
+            total = int(conn_verify.execute("SELECT COUNT(*) FROM concursos").fetchone()[0])
+            log(f"✅ bootstrap_db concluído concursos={total}")
+        except Exception:
+            conn_verify.rollback()
+            raise
+        finally:
+            conn_verify.close()
+
+    _with_sqlite_retry(_run_bootstrap, retries=5)
 
 
 def ensure_runtime_tables(conn: sqlite3.Connection) -> None:
@@ -1317,6 +1500,69 @@ def ensure_runtime_tables(conn: sqlite3.Connection) -> None:
     ensure_meta_tables(conn)
     ensure_memory_tables(conn)
     _ensure_user_tables(conn)
+
+
+def run_selfcheck(args: argparse.Namespace, progress: ProgressPrinter) -> int:
+    t0 = time.perf_counter()
+    conn = get_conn()
+    try:
+        _apply_bootstrap_pragmas(conn, busy_timeout_ms=int(getattr(args, "bootstrap_busy_timeout_ms", 8000)))
+        ensure_runtime_tables(conn)
+        missing = [t for t in ESSENTIAL_TABLES if not safe_table_exists(conn, t)]
+        if missing:
+            log(f"❌ selfcheck: tabelas essenciais ausentes: {missing}")
+            return 2
+        total = int(conn.execute("SELECT COUNT(*) FROM concursos").fetchone()[0])
+        if total < 2:
+            log("❌ selfcheck: concursos insuficientes")
+            return 3
+        heartbeat(progress, every_s=0.1, phase="selfcheck", detail="db_ok", i=1, n=3, elapsed=time.perf_counter() - t0)
+
+        trainable = fetch_all_concursos(conn)
+        state, _, _, _ = _normalize_resume_state(
+            {"step_global": max(1, len(trainable) // 2), "concurso_ref": int(trainable[max(0, len(trainable) // 2 - 1)]), "schema_version": CHECKPOINT_SCHEMA_VERSION},
+            trainable,
+            done=max(1, len(trainable) // 2),
+            db_step=max(1, len(trainable) // 3),
+            db_concurso_ref=int(trainable[max(0, len(trainable) // 3 - 1)]),
+            force_rebase=False,
+        )
+        if int(state.get("step_global", 0)) < max(1, len(trainable) // 2):
+            log("❌ selfcheck: regressão de step detectada")
+            return 4
+        heartbeat(progress, every_s=0.1, phase="selfcheck", detail="resume_ok", i=2, n=3, elapsed=time.perf_counter() - t0)
+
+        # Step rápido: chamada de evaluate sem alterar score/arquitetura (modo mínimo).
+        hub = BrainHub(conn)
+        loaded = register_brains_auto(conn, hub)
+        if not loaded:
+            log("❌ selfcheck: sem cérebros carregados")
+            return 5
+        hub.load_all()
+        recipes = ensure_seed_recipes(conn, loaded)
+        arm = build_default_arms()[0]
+        recipe = next(iter(recipes.values()))
+        concurso_n = int(trainable[-2])
+        _ = run_step(
+            conn=conn,
+            hub=hub,
+            concurso_n=concurso_n,
+            arm=arm,
+            recipe=recipe,
+            recent_window=max(50, int(args.recent_window)),
+            avaliar_top_k=min(3, int(args.avaliar_top_k)),
+            min_mem=int(args.min_mem),
+            reward_q15=float(args.reward_q15),
+            reward_q14=float(args.reward_q14),
+            progress=progress,
+            runtime_cfg={"progress_heartbeat_seconds": 0.2, "progress_heartbeat_every_items": 1, "evaluate_hits_soft_timeout_s": 5},
+        )
+        heartbeat(progress, every_s=0.1, phase="selfcheck", detail="eval_ok", i=3, n=3, elapsed=time.perf_counter() - t0)
+        log(f"✅ selfcheck concluído em {time.perf_counter()-t0:.2f}s concursos={total}")
+        return 0
+    finally:
+        conn.close()
+
 
 def main() -> None:
     try:
@@ -1349,6 +1595,9 @@ def main() -> None:
     parser.add_argument("--profile-steps", type=int, default=0, help="Se 1, imprime tempo por fase em cada resumo de progresso.")
     parser.add_argument("--panel", type=int, default=1, help="Se 1, imprime painel ao vivo compacto no console.")
     parser.add_argument("--panel-every-steps", type=int, default=0, help="Intervalo do painel (0=usa update_every_steps do learning_monitor).")
+    parser.add_argument("--selfcheck", action="store_true", help="Executa checagens rápidas offline e sai.")
+    parser.add_argument("--rebase", action="store_true", help="Permite rebase explícito do checkpoint de auto-resume.")
+    parser.add_argument("--bootstrap-busy-timeout-ms", type=int, default=8000, help="busy_timeout (ms) no bootstrap SQLite.")
     args = parser.parse_args()
 
     progress = ProgressPrinter(
@@ -1357,8 +1606,7 @@ def main() -> None:
         profile_steps=bool(int(args.profile_steps)),
     )
     step_timer = StepTimer()
-    heartbeat = Heartbeat(progress, seconds=int(args.heartbeat_seconds), freeze_warn_seconds=max(60, int(args.heartbeat_seconds) * 4))
-    heartbeat.start()
+    hb_thread: Heartbeat | None = None
 
     meta_config = load_json_config(ROOT / "config" / "meta_controller.json", {"enabled": False})
     diversity_cfg = load_json_config(ROOT / "config" / "diversity.json", {"enabled": False})
@@ -1392,11 +1640,16 @@ def main() -> None:
     random.seed(seed)
     np.random.seed(seed)
 
-    _bootstrap_database_if_missing_base()
+    _bootstrap_database_if_missing_base(busy_timeout_ms=int(args.bootstrap_busy_timeout_ms))
     conn = get_conn()
     run_id = None
     meta_run_id = None
     try:
+        if bool(args.selfcheck):
+            code = run_selfcheck(args, progress)
+            if code != 0:
+                raise SystemExit(code)
+            return
         if not safe_table_exists(conn, "concursos"):
             raise RuntimeError("Tabela 'concursos' ainda não existe após bootstrap automático.")
 
@@ -1470,6 +1723,9 @@ def main() -> None:
         start = time.time()
         done = 0
         totals = {"q14": 0, "q15": 0, "mem": 0}
+        validate_degrade_until_step = 0
+        validate_degrade_max_games = min(int(baseline_cfg.get("max_games", 60)), 60)
+        validate_degrade_recipe_cap = max(3, int(governance_cfg.get("candidate_recipe_cap", 24)))
 
         log("=========================================")
         log("🧠 BACKTEST SMART AUTÔNOMO — FOCO 14/15")
@@ -1496,7 +1752,16 @@ def main() -> None:
                 telemetry_writer.log_run_artifact(int(meta_run_id), k, v)
 
         if resume_state:
-            resume_state, resume_reason, prev_step, prev_ref = _normalize_resume_state(dict(resume_state), trainable, done)
+            db_step_ref = int(pos)
+            db_concurso_ref = int(ck if ck in trainable else (trainable[max(0, pos - 1)] if trainable else 0))
+            resume_state, resume_reason, prev_step, prev_ref = _normalize_resume_state(
+                dict(resume_state),
+                trainable,
+                done,
+                db_step=db_step_ref,
+                db_concurso_ref=db_concurso_ref,
+                force_rebase=bool(args.rebase),
+            )
             try:
                 random.setstate(_decode_obj(str(resume_state.get("rng_state_py", ""))))
             except Exception:
@@ -1524,6 +1789,17 @@ def main() -> None:
             restored_ref = int(resume_state.get("concurso_ref", 0))
             if restored_ref in trainable:
                 pos = (trainable.index(restored_ref) + 1) % max(1, len(trainable))
+            if int(done) < int(db_step_ref) or int(restored_ref) < int(db_concurso_ref):
+                fixed_step = max(int(done), int(db_step_ref))
+                fixed_ref = max(int(restored_ref), int(db_concurso_ref))
+                log(
+                    f"⚠️ resume inconsistente (step/concurso regressivo), aplicando max checkpoint/db/args "
+                    f"step={done}->{fixed_step} concurso_ref={restored_ref}->{fixed_ref}"
+                )
+                done = fixed_step
+                restored_ref = fixed_ref
+                if restored_ref in trainable:
+                    pos = (trainable.index(restored_ref) + 1) % max(1, len(trainable))
             _restore_brain_mask(hub, resume_state.get("policy", {}).get("brain_mask", []))
             learning_snapshot = dict(resume_state.get("learning_snapshot", learning_snapshot))
             if resume_reason == "rebase":
@@ -1531,6 +1807,9 @@ def main() -> None:
             elif resume_reason != "normal":
                 log(f"🛠️ resume_repair reason={resume_reason} step={prev_step}->{done} concurso_ref={prev_ref}->{restored_ref}")
             log(f"♻️ Auto-resume aplicado: step_global {prev_step}->{done} | concurso_ref {prev_ref}->{restored_ref} | motivo={resume_reason}")
+
+        hb_thread = Heartbeat(progress, seconds=int(args.heartbeat_seconds), freeze_warn_seconds=max(60, int(args.heartbeat_seconds) * 4))
+        hb_thread.start()
 
         while True:
             if args.steps > 0 and done >= int(args.steps):
@@ -1548,6 +1827,7 @@ def main() -> None:
 
             step_timer.start_step()
             log(f"🔎 trace_id={trace_id} run_id={run_id} step={int(done+1)} N={concurso_n} phase=start")
+            heartbeat(progress, every_s=10.0, phase="step", detail="start", i=int(done + 1), elapsed=float(time.time() - start), extra=trace_id)
             progress.set_state(step=int(done + 1), concurso=concurso_n)
             progress.set_phase("features", detail="context")
 
@@ -1663,7 +1943,7 @@ def main() -> None:
                         now_str(),
                     ),
                 )
-                conn.commit()
+                safe_db_commit(conn, progress=progress, trace_id=trace_id, phase="features_persist", payload={"step": int(done + 1), "concurso": int(concurso_n)})
 
             step_timer.mark("features")
 
@@ -1916,7 +2196,7 @@ def main() -> None:
                         applied_params=applied_gen_params,
                         created_at=now_str(),
                     )
-                    conn.commit()
+                    safe_db_commit(conn, progress=progress, trace_id=trace_id, phase="governance_persist", payload={"step": int(done), "policy": str(governance_snapshot.get("policy", ""))})
                 except Exception as _gov_exc:
                     log(f"⚠️ governance save falhou: {_gov_exc}")
 
@@ -2001,20 +2281,48 @@ def main() -> None:
                     pm = build_per_brain_map(loaded, phase_scores, arm.base_per_brain, arm.boost_top_brains, recipe.boosts)
                     g = hub.generate_games(context=ctx, size=int(tipo_jogo), per_brain=pm, top_n=min(120, int(max_games) * 3)) or []
                     out = []
-                    for item in g[: int(max_games)]:
+                    for idx, item in enumerate(g[: int(max_games)], start=1):
                         jogo = sorted(set(int(x) for x in item.get("jogo", []) if x is not None))
                         if len(jogo) == int(tipo_jogo):
                             out.append(jogo)
+                        heartbeat(progress, every_s=10.0, phase="validate_candidate", detail="candidate_callable", i=idx, n=int(max_games), elapsed=float(idx))
                     return out
 
                 progress.set_phase("generate_candidates", detail="validate_candidate")
+                effective_validate_max_games = int(validate_degrade_max_games)
+                validate_t0 = time.perf_counter()
+                heartbeat(progress, every_s=2.0, phase="validate_candidate", detail="start", i=done, n=max(1, int(args.steps) if int(args.steps) > 0 else done + 1), elapsed=0.0)
                 validator_report = strategy_validator.validate_candidate(
                     candidate_callable=_candidate_callable,
                     concurso_ref=int(concurso_n),
                     tipo_jogo=15,
-                    max_games=min(int(baseline_cfg.get("max_games", 60)), 60),
+                    max_games=effective_validate_max_games,
                     context={"arm": arm.name, "recipe": recipe.name, "mode": mode, "heartbeat": progress.heartbeat},
                 )
+                validate_elapsed = float(time.perf_counter() - validate_t0)
+                heartbeat(progress, every_s=2.0, phase="validate_candidate", detail="end", i=done, n=max(1, int(args.steps) if int(args.steps) > 0 else done + 1), elapsed=validate_elapsed)
+                validate_slow_s = float(validator_cfg.get("degrade_after_s", 12.0))
+                degrade_window_steps = max(5, int(validator_cfg.get("degrade_window_steps", 30)))
+                if validate_elapsed >= validate_slow_s:
+                    old_games = int(validate_degrade_max_games)
+                    old_cap = int(validate_degrade_recipe_cap)
+                    validate_degrade_until_step = max(int(validate_degrade_until_step), int(done + degrade_window_steps))
+                    validate_degrade_max_games = max(12, int(old_games * 0.8))
+                    validate_degrade_recipe_cap = max(6, int(old_cap * 0.9))
+                    log(
+                        f"⚠️ validate_candidate lento; ativando degrade até step={validate_degrade_until_step} "
+                        f"max_games {old_games}->{validate_degrade_max_games} candidate_recipe_cap {old_cap}->{validate_degrade_recipe_cap}"
+                    )
+                elif int(done) >= int(validate_degrade_until_step):
+                    base_games = min(int(baseline_cfg.get("max_games", 60)), 60)
+                    base_cap = max(3, int(governance_cfg.get("candidate_recipe_cap", 24)))
+                    if validate_degrade_max_games != base_games or validate_degrade_recipe_cap != base_cap:
+                        log(
+                            f"ℹ️ encerrando degrade validate_candidate: max_games {validate_degrade_max_games}->{base_games} "
+                            f"candidate_recipe_cap {validate_degrade_recipe_cap}->{base_cap}"
+                        )
+                    validate_degrade_max_games = base_games
+                    validate_degrade_recipe_cap = base_cap
 
                 if bool(reporting_cfg.get("enabled", True)) and meta_run_id is not None:
                     telemetry_writer.log_experiment(
@@ -2041,7 +2349,7 @@ def main() -> None:
                         """,
                         (f"%{recipe.name}%",),
                     )
-                    conn.commit()
+                    safe_db_commit(conn, progress=progress, trace_id=trace_id, phase="validator_persist", payload={"recipe": recipe.name, "step": int(done)})
 
             promo_action = promotion_manager.evaluate_candidate({**cand_stats, **validator_report}, base_stats)
             if promo_action in {"park", "disable"} and recipe.name in recipes:
@@ -2068,7 +2376,7 @@ def main() -> None:
                         now_str(),
                     ),
                 )
-                conn.commit()
+                safe_db_commit(conn, progress=progress, trace_id=trace_id, phase="outcomes_persist", payload={"step": int(done), "concurso": int(concurso_n + 1)})
 
             step_timer.mark("train_meta")
             progress.set_phase("checkpoint", detail="save")
@@ -2200,7 +2508,8 @@ def main() -> None:
                         score=recipe_stats.get(name, RecipeStats()).mean_reward,
                     )
 
-            candidate_cap = max(3, int(governance_cfg.get("candidate_recipe_cap", 24)))
+            candidate_cap_base = max(3, int(governance_cfg.get("candidate_recipe_cap", 24)))
+            candidate_cap = max(3, min(candidate_cap_base, int(validate_degrade_recipe_cap)))
             candidate_names = [k for k, v in recipes.items() if str(v.status) == "candidate"]
             if len(candidate_names) > candidate_cap:
                 ordered_cands = sorted(candidate_names, key=lambda n: int(getattr(recipes[n], "generation", 0)), reverse=True)
@@ -2219,6 +2528,13 @@ def main() -> None:
                 totals={"total_q14": totals["q14"], "total_q15": totals["q15"], "total_mem": totals["mem"]},
             )
             set_smart_checkpoint(conn, concurso_n)
+            safe_db_commit(
+                conn,
+                progress=progress,
+                trace_id=trace_id,
+                phase="db_commit",
+                payload={"step": int(done), "concurso": int(concurso_n), "arm": arm.name, "recipe": recipe.name},
+            )
 
             if done % max(1, int(args.save_every)) == 0:
                 hub.save_all()
@@ -2309,7 +2625,8 @@ def main() -> None:
         log("=========================================")
     finally:
         try:
-            heartbeat.stop()
+            if hb_thread is not None:
+                hb_thread.stop()
         except Exception:
             pass
         try:

@@ -30,3 +30,30 @@ def test_resume_rebase_only_on_schema_migration():
     assert reason == "rebase"
     assert state["concurso_ref"] == 20
     assert state["step_global"] == len(trainable)
+
+
+def test_resume_never_regresses_vs_db_state_without_force_rebase():
+    trainable = list(range(100, 141))
+    state, reason, _, _ = _normalize_resume_state(
+        {"step": 3, "concurso_ref": 104, "schema_version": 2},
+        trainable,
+        done=0,
+        db_step=10,
+        db_concurso_ref=109,
+        force_rebase=False,
+    )
+
+    assert reason in {"normal", "repair"}
+    assert state["step_global"] >= 10
+    assert state["concurso_ref"] >= 109
+
+
+def test_resume_force_rebase_when_requested():
+    trainable = list(range(10, 21))
+    _, reason, _, _ = _normalize_resume_state(
+        {"step": 1, "concurso_ref": 12, "schema_version": 2},
+        trainable,
+        done=1,
+        force_rebase=True,
+    )
+    assert reason == "rebase"
