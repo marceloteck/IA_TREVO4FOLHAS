@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import random
+import time
 from typing import Dict, List
 
 import numpy as np
@@ -32,6 +33,8 @@ class MetaController:
 
         self._train_buffer: List[dict] = []
         self._last_decision: dict | None = None
+        self._last_batch_log_ts: float = 0.0
+        self._last_logged_batch: int | None = None
 
         self._load_checkpoint()
 
@@ -54,11 +57,19 @@ class MetaController:
     def _apply_effective_batch_size(self, sample_count: int) -> None:
         configured_batch_size = int(self.config.get("batch_size", 32))
         effective_batch_size = max(1, min(configured_batch_size, int(sample_count)))
-        if effective_batch_size != configured_batch_size:
+        cooldown_s = max(1.0, float(self.config.get("mlp_batch_log_cooldown_s", 30.0)))
+        now = time.time()
+        should_log = (
+            effective_batch_size != configured_batch_size
+            and (now - float(self._last_batch_log_ts)) >= cooldown_s
+        )
+        if should_log:
             print(
                 f"mlp: batch_size ajustado {configured_batch_size}->{effective_batch_size} (n={int(sample_count)})",
                 flush=True,
             )
+            self._last_batch_log_ts = now
+            self._last_logged_batch = effective_batch_size
         self.arm_model.batch_size = effective_batch_size
         self.recipe_model.batch_size = effective_batch_size
         self.explore_model.batch_size = effective_batch_size
