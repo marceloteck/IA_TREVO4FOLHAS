@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import heapq
 import json
 import math
 import random
@@ -91,10 +92,12 @@ def _normalized_from_weights(weights: Dict[int, float]) -> tuple[List[int], List
     return pool, w, total
 
 
-def _fallback_weighted_sample(pool: List[int], w: List[float], remaining: int) -> List[int]:
+def _fallback_weighted_sample(pool: List[int], w: List[float], remaining: int, rng: random.Random | None = None) -> List[int]:
     remaining = max(0, min(int(remaining), len(pool)))
     if remaining <= 0:
         return []
+
+    rr = rng if isinstance(rng, random.Random) else random
     try:
         import numpy as np
 
@@ -109,18 +112,35 @@ def _fallback_weighted_sample(pool: List[int], w: List[float], remaining: int) -
     except Exception:
         pass
 
-    # Efraimidis–Spirakis (A-Res)
-    scored: List[tuple[float, int]] = []
+    positives: List[tuple[int, float]] = []
+    zeros: List[int] = []
     for i, item in enumerate(pool):
         wi = max(0.0, float(w[i]))
-        if wi <= 0.0:
-            key = -1e18
+        if wi > 0.0:
+            positives.append((int(item), wi))
         else:
-            u = max(1e-12, random.random())
-            key = -math.log(u) / wi
-        scored.append((key, int(item)))
-    scored.sort(key=lambda x: x[0])
-    return [int(x[1]) for x in scored[:remaining]]
+            zeros.append(int(item))
+
+    if not positives:
+        rr.shuffle(zeros)
+        return zeros[:remaining]
+
+    # Efraimidis–Spirakis (A-Res) com heap mínimo (O(n log k)).
+    k_eff = min(remaining, len(positives))
+    heap: List[tuple[float, int]] = []
+    for item, wi in positives:
+        u = max(1e-12, rr.random())
+        key = math.log(u) / wi
+        if len(heap) < k_eff:
+            heapq.heappush(heap, (key, int(item)))
+        elif key > heap[0][0]:
+            heapq.heapreplace(heap, (key, int(item)))
+
+    out = [int(x[1]) for x in heap]
+    if len(out) < remaining and zeros:
+        rr.shuffle(zeros)
+        out.extend(zeros[: remaining - len(out)])
+    return out
 
 
 def weighted_sample_without_replacement(
@@ -128,6 +148,7 @@ def weighted_sample_without_replacement(
     k: int,
     heartbeat_cb: Callable[[Dict[str, Any]], None] | None = None,
     heartbeat_every: float | None = None,
+    rng: random.Random | None = None,
 ) -> List[int]:
     pool, w, total = _normalized_from_weights(weights)
     if k <= 0 or not pool:
@@ -174,7 +195,7 @@ def weighted_sample_without_replacement(
         except Exception:
             pass
 
-    result = _fallback_weighted_sample(pool, w, k)
+    result = _fallback_weighted_sample(pool, w, k, rng=rng)
 
     now = time.perf_counter()
     elapsed = now - started

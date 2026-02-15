@@ -77,6 +77,8 @@ class LearningMonitor:
         self._baseline_real_source = "fixed"
         self._baseline_announced = False
         self._warmup_exit_announced = False
+        self.const_score_streak = 0
+        self.hit_plateau_streak = 0
 
     def _window_metrics(self, data: List[Dict[str, float]]) -> Dict[str, float]:
         if not data:
@@ -271,6 +273,21 @@ class LearningMonitor:
             self.green_counter = max(0, self.green_counter - 1)
             self.red_counter = max(0, self.red_counter - 1)
 
+        events = list(snap.get("events", []))
+        const_steps = max(8, int(self.cfg.get("constant_score_steps", 20)))
+        if len(self.history) >= const_steps:
+            window = list(self.history)[-const_steps:]
+            vals = [float(x.get("reward", 0.0)) for x in window]
+            if vals and (max(vals) - min(vals)) <= float(self.cfg.get("constant_score_eps", 1e-6)):
+                self.const_score_streak += 1
+            else:
+                self.const_score_streak = 0
+            hit_vals = [int(float(x.get("hit_max", 0.0))) for x in window]
+            if hit_vals and max(hit_vals) <= int(self.cfg.get("hit_plateau_max", 13)):
+                self.hit_plateau_streak += 1
+            else:
+                self.hit_plateau_streak = 0
+
         policy = MonitorPolicy()
         if status == STATUS_LEARNING and self.green_counter >= self.green_strong_steps:
             policy.exploration_delta = -float(self.cfg.get("green_exploration_decay", 0.05))
@@ -280,6 +297,16 @@ class LearningMonitor:
             policy.confidence_mult = 1.0 - float(self.cfg.get("red_confidence_reset", 0.20))
             policy.force_mode = "research"
             policy.rescue_mode = True
+
+        if self.const_score_streak > 0:
+            policy.exploration_delta = max(float(policy.exploration_delta), float(self.cfg.get("constant_score_exploration_boost", 0.10)))
+            policy.confidence_mult = min(float(policy.confidence_mult), 1.0 - float(self.cfg.get("constant_score_conf_drop", 0.08)))
+            events.append(f"anti_stagnation:score_constante streak={int(self.const_score_streak)}")
+
+        if self.hit_plateau_streak > 0:
+            policy.exploration_delta = max(float(policy.exploration_delta), float(self.cfg.get("hit_plateau_exploration_boost", 0.12)))
+            policy.force_mode = policy.force_mode or "research"
+            events.append(f"anti_stagnation:hit_plateau<=13 streak={int(self.hit_plateau_streak)}")
 
         policy.confidence_mult = _clamp(policy.confidence_mult, 0.20, 1.50)
         self.policy = policy
@@ -294,6 +321,7 @@ class LearningMonitor:
                 "red_counter": int(self.red_counter),
                 "policy": self.policy.to_dict(),
                 "should_log": int(step) % self.update_every_steps == 0,
+                "events": events,
             }
         )
         return snap
@@ -307,6 +335,8 @@ class LearningMonitor:
             "policy": self.policy.to_dict(),
             "warmup_exit_announced": bool(self._warmup_exit_announced),
             "baseline_announced": bool(self._baseline_announced),
+            "const_score_streak": int(self.const_score_streak),
+            "hit_plateau_streak": int(self.hit_plateau_streak),
         }
 
     def set_state(self, state: Dict[str, Any]) -> None:
@@ -319,3 +349,5 @@ class LearningMonitor:
         self.policy = MonitorPolicy.from_dict(dict(state.get("policy", {})))
         self._warmup_exit_announced = bool(state.get("warmup_exit_announced", False))
         self._baseline_announced = bool(state.get("baseline_announced", False))
+        self.const_score_streak = int(state.get("const_score_streak", 0))
+        self.hit_plateau_streak = int(state.get("hit_plateau_streak", 0))

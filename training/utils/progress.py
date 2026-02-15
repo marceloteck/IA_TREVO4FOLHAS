@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import faulthandler
+import os
 import sys
 import threading
 import time
@@ -24,7 +25,7 @@ class ProgressPrinter:
         profile_steps: bool = False,
         stream: Any = sys.stdout,
         progress_log_every_s: float = 15.0,
-        watchdog_dump_cooldown_s: float = 300.0,
+        watchdog_dump_cooldown_s: float = 120.0,
     ):
         self.progress_every_steps = max(1, int(progress_every_steps))
         self.heartbeat_seconds = max(1, int(heartbeat_seconds))
@@ -39,6 +40,7 @@ class ProgressPrinter:
         self.watchdog_dump_cooldown_s = max(5.0, float(watchdog_dump_cooldown_s))
         self._last_dump_ts = 0.0
         self.heartbeat_snapshot: Dict[str, Any] = {}
+        self._phase_last_log: Dict[str, float] = {}
         self.state: Dict[str, Any] = {
             "step": None,
             "concurso": None,
@@ -117,6 +119,26 @@ class ProgressPrinter:
                     f" last_ok={last_ok} last_fail={last_fail}{extra_rate}"
                 )
 
+    def tick(self, phase: str, detail: str | None = None, i: int | None = None, total: int | None = None) -> None:
+        payload: Dict[str, Any] = {"phase": str(phase)}
+        if detail is not None:
+            payload["detail"] = str(detail)
+        if i is not None:
+            payload["i"] = int(i)
+        if total is not None:
+            payload["n"] = int(total)
+        self.heartbeat(payload, log_every_s=self.progress_log_every_s)
+
+    def log_every(self, phase: str, seconds: float, message: str) -> None:
+        now = time.time()
+        phase_key = str(phase)
+        with self.lock:
+            last = float(self._phase_last_log.get(phase_key, 0.0))
+            if (now - last) < max(1.0, float(seconds)):
+                return
+            self._phase_last_log[phase_key] = now
+        self.log(message)
+
     def log_step(self, data: Dict[str, Any]) -> None:
         msg = " | ".join(
             [
@@ -186,6 +208,12 @@ class Heartbeat(threading.Thread):
         super().__init__(daemon=True)
         self.printer = printer
         self.seconds = max(1, int(seconds))
+        env_watchdog = os.getenv("IA_WATCHDOG_SECONDS", "").strip()
+        if env_watchdog:
+            try:
+                freeze_warn_seconds = int(float(env_watchdog))
+            except Exception:
+                pass
         self.freeze_warn_seconds = max(self.seconds, int(freeze_warn_seconds))
         self._stop_event = threading.Event()
 
@@ -207,14 +235,7 @@ class Heartbeat(threading.Thread):
                 update_last_log=False,
             )
             heavy_phase = str(state.get("phase", "")) in {"evaluate_hits", "features", "generate_candidates"}
-            if since_last >= float(self.freeze_warn_seconds):
-                if heavy_phase and since_heartbeat <= float(self.freeze_warn_seconds):
-                    self.printer.log(
-                        "ℹ️ watchdog: ok (heartbeat ativo) "
-                        f"subphase={hb_data.get('subphase', hb_data.get('detail', '-'))} "
-                        f"elapsed={float(hb_data.get('elapsed', 0.0)):.1f}s"
-                    )
-                    continue
+            if since_heartbeat >= float(self.freeze_warn_seconds):
                 now_dump = time.time()
                 with self.printer.lock:
                     cooldown = float(self.printer.watchdog_dump_cooldown_s)
@@ -226,6 +247,7 @@ class Heartbeat(threading.Thread):
                     continue
                 self.printer.log(
                     "⚠️ watchdog: sem logs recentes (pode ser etapa longa, não necessariamente erro); "
+                    f"state phase={state.get('phase')} detail={detail} i={hb_data.get('i', '-')}/{hb_data.get('n', '-')} elapsed={float(hb_data.get('elapsed', 0.0)):.1f}s; "
                     "dump leve da stack principal"
                 )
                 try:
